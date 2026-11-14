@@ -581,7 +581,8 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
 - A result that contradicts the design of plan 2 stops this plan. Correct the design first.
 - Verification: the record is in `docs/operator.md` under a dated heading.
 - Dependencies: D2. This task can run as soon as the operator is available.
-- Status: pending
+- Status: blocked (2026-11-13). This workstation has no mount of the export (`/data1` is local
+  ext4) and the storage operator is not available. No measurement was made.
 
 ### D6 Documentation (old M11.12)
 
@@ -597,7 +598,267 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
   - Add a supersession note to `docs/adr/0008-uploads-through-tusd.md`. Keep its history.
 - Verification: the old task's entry, `make docs-check`, `uv run python scripts/ste_check.py`.
 - Dependencies: D4, D5.
-- Status: pending
+- Owner decision (2026-11-13): "do D6 now out of order". D6 runs before D5. D6 does not write
+  the D5 measurement record and does not give a measured value for the export. Where a text
+  depends on a D5 result, it says that the measurement is not yet made.
+- Status: complete (2026-11-13). Verification 10 passed after 10 implementation passes;
+  verifications 1 to 9 failed, each on text findings. Gate of verification 10: `make gate` exit
+  0, 4667 passed, 39 deselected, 0 skipped, 12332 statements with 0 missed, 68 clones in 25 groups
+  against the baseline of 69 in 25. The integration tier, the web gate and the documented
+  procedures on a cluster or on the export did not run. Implementation pass 1 (2026-11-13):
+  - Changed: `docs/operator.md` (ACL text removed, an organization without a root at
+    `<lake_path>/<name>`, and new sections for the lake and its users, the upload pod, share groups,
+    install order, symbolic links, one writer, the publication of a commit, blocked commit
+    requests, capacity and lifetime, cleanup, "Helm: not yet delivered", the local cluster
+    `huron-local`, "Setgid measurement (pending)" and backups), `docs/architecture.md`,
+    `docs/user-guide.md`, `docs/concepts/how-huron-works.md`, `docs/concepts/raw-ingest.md`,
+    `docs/concepts/metadata-and-schemas.md`, `docs/concepts/access-and-roles.md`,
+    `docs/web-design.md` (a dated amendment, and the ACL command named in words),
+    `docs/adr/0008-uploads-through-tusd.md` (a supersession note, the record kept), `README.md`,
+    `deploy/README.md`, `dev.env` (comment), `CONTEXT.md` and the labels of the two component
+    diagrams in `web/docs-site/public/diagrams/`.
+  - The D5 measurements are not made. Each text that depends on one says so.
+  - The README note on `INTERNAL` for `-1e31` is removed: `huron.pkg.canonical` writes integers
+    of any size since commit `a666c886`, and the contract suite covers `-1e31`.
+  - Runs: `make gate` exits 0 with 4667 passed, 39 deselected, 0 skipped, 12332 statements, 0
+    missed, 68 clones in 25 groups. `make docs-check` and `uv run python scripts/ste_check.py`
+    pass. The greps of old M11.12 pass. The integration tier and the web gate did not run.
+  - Verification 1 (2026-11-13): FAIL with seven small findings. Fix pass 2:
+    1. `raw-ingest.md` and `architecture.md`: the dry run sends the path, the size and the
+       `sha256` of each add, and the upload ID of a sealed upload.
+    2. `operator.md` "Reading `huron adm check`": the check as `U` with `oc exec -it deploy/huron
+       -- sh`, with the configuration and the state in `/tmp`, `HURON_API_URL`, `HURON_ISSUER`,
+       `HURON_MOUNT_PREFIX` and `huron login --device`. Not tested on a cluster.
+    3. `operator.md`, the lost-object procedure: continue only for `state = 'sealed'`, the copy
+       goes into the API pod with `oc cp` and `install -m 0644`, and the queries use
+       `commit_requests.id`. Not tested on a cluster.
+    4. `operator.md`: the token path is `${XDG_STATE_HOME:-$HOME/.local/state}/huron/tokens.json`.
+    5. `CONTEXT.md` read again in full. Terms of features that the code does not have are gone
+       (catalog config, config version, file stamp, express slot, bulk metadata edit, move,
+       staging directory, pin, resolved, persistence point, prefill, stale staged entry,
+       reconciler, sweep, orphan directory, roles claim, loopback NFS tier). Role, grant, Huron
+       JWT, working copy, lake path, share group, repair, schema and check now match the code.
+    6. `operator.md`: one list of pending measurements. ADR 0008: the closing sentence is its
+       own paragraph.
+    7. The lines below stand in for the Execution notes that old M11.12 asks for, because
+       `IMPLEMENTATION_PLAN.md` is not edited in this plan.
+    Also: `operator.md` and `deploy/README.md` name the timeouts that bound a final `PATCH`
+    (nginx `proxy_read_timeout 120s`, tusd `-request-completion-timeout=60s` and
+    `-network-timeout=2m`). The padding of the access row in `web-design.md` is fixed.
+  - Execution notes for old M11.12. They stand in for the lines in the Execution notes of
+    `IMPLEMENTATION_PLAN.md`, which this plan does not edit. They say where the built system
+    differs from section 3, sections 4.1, 6 and 12, ADR 0008, `CONTEXT.md` and `AGENTS.md`:
+    - Sections 3, 4.1, 6 and 12 of `IMPLEMENTATION_PLAN.md` differ from the built system. D-7
+      and D-8 of section 3 (a synchronous commit, no idempotency keys) are replaced by commit
+      requests with request IDs. The row of `huron-api` in section 4.1 (placement, the unlink
+      of removed files, the sweep of `.tus-uploads`), sections 6.2 and 6.3 (a placed file, the
+      push write path with `Placer`, receipts and removal rows) and the risk register rows of
+      section 12 on placement, receipts, the removal race and the sweep describe the replaced
+      design. `IMPLEMENTATION_PLAN.md` is not edited: plan 2 records the replaced decisions in
+      its section "Design" ("This section replaces decisions D-7 and D-8 … and the upload flow
+      of its uploads amendment"), and `M11_PLANS.md` says to list replaced decisions in each
+      plan and not to edit the old plan. The documents of D6 describe the built system.
+    - ADR 0008: the publication design replaces the placement in `pre-finish`, the receipts, the
+      latest placement, the removal rows, the background unlink, the `pre-terminate` hook and
+      the two-replica window. A supersession note at the top names each part. The record stays.
+    - `CONTEXT.md`, compared with `git show HEAD:CONTEXT.md` term by term:
+      - Dropped, with no successor: Bulk metadata edit, Catalog config, Config version, Express
+        slot, File stamp, Identifier forms, Loopback NFS tier, Move, Orphan directory,
+        Persistence point, Pin, Prefill, Resolved, Roles claim, Staging directory, Stale staged
+        entry and Sweep.
+      - Dropped and replaced: Commit plan by Commit entry, Org base schema by Base schema
+        (`huron-base`), Placement by Seal and Publication, Receipt by Seal and Object area,
+        Reconciler by Drift check, Role mapping by Grant.
+      - Added: Base schema, Cleanup, Commit entry, Drift check, Grant, Object area, Publication,
+        Reconcile (the startup reconcile of declared organizations), Seal and Writer lock.
+      - Rewritten to match the code: Catalog, Segment, Identifier, Metadata schema,
+        Organization, File, Commit, Commit state, Overwrite, Publish, Mount prefix, Partial,
+        Upload, Lake path (an organization directory may be its own mount), Share group, Repair,
+        Working copy, Context, State directory, Company IdP, Group directory, Huron JWT, Role,
+        Finding and Hierarchy, and the Relationships, the example dialogue and the Flagged
+        ambiguities.
+    - `AGENTS.md` (fix pass 4): the layout block differed from the tree. `lake/` now also names
+      `uploads`, `publications` and `repairs`, `storage/` names seal, publication, repair and
+      provisioning, and `api/` names `disk/`, which holds the lake work. The dependency rules
+      and the gate of `AGENTS.md` match the code.
+  - Verification 2 (2026-11-13): FAIL with five findings. Fix pass 3:
+    1. `operator.md` "Reading `huron adm check`": no account checks everything. On a workstation
+       an account in `G` and every share group checks the share groups but not the object
+       areas. In the API pod, `U` reads everything, but the image resolves no LDAP group, so
+       each catalog with a share group gives `share_group_mismatch` and the check exits 1. The
+       row of `share_group_mismatch` says so. The help of `huron adm check` still says that a
+       complete check needs the service user in an API pod; that text is code and is not
+       changed here.
+    2. `operator.md` "The upload pod" and `deploy/README.md`: the procedure for a longer
+       `upload_hook_timeout` names `-request-completion-timeout` (equal to
+       `-hooks-http-timeout`), `-network-timeout` (longer) and the grace periods, with an
+       example for 15 minutes. nginx (120 s) and the Route (3600 s) need no change.
+    3. `operator.md`, the lost-object procedure: the update converts an inode of 2^63 or more
+       to the signed `bigint` (`n - 2^64`), as `signed_inode` does. The copy is synced with
+       `sync <file> <object area>`.
+    4. The execution notes above cover sections 3, 4.1, 6 and 12, and list each term of
+       `CONTEXT.md` by name.
+    5. `CONTEXT.md`: the "sweep" ambiguity names the web's session sweep. File names the inode
+       of its object. Drift check no longer contradicts the `Reconciler` class.
+  - Verification 3 (2026-11-13): FAIL with four small text findings. Fix pass 4:
+    1. `architecture.md`: `core.lake` lists its ten areas, uploads, publications and repairs
+       included. The dependency diagram shows the imports of the code: `core.lake` also imports
+       `core.security.broker.keys`, `schema` and `pkg`; `core.security` imports only `pkg`; the
+       CLI imports `core.lake` organizations and publications, `schema` and `pkg`.
+    2. `AGENTS.md`: the layout block (see the execution note above).
+    3. A catalog can have one share group, and without one only `U` and the members of `G` read
+       it: `README.md`, `how-huron-works.md` and `operator.md` (Prerequisites, LDAP groups).
+    4. `operator.md`: an account that cannot read an entry gets `unreadable` outside the object
+       areas. The check skips an object area for every account but `U`, with no finding.
+    Also: `raw-ingest.md` says how `huron status`, `huron adm verify-mounts` and
+    `huron adm check` report a refused marker, in place of "exit code 8". The description of
+    the two component diagrams no longer says that the CLI reads the share.
+  - Verification 4 (2026-11-13): FAIL with four small text findings. Fix pass 5:
+    1. `operator.md` "The API's mount" and `raw-ingest.md` "Drift detection": the walks do not
+       enter `.huron-objects`. `huron adm check` lists each object area as `U` only, and reports
+       there probe files, links and entries that it cannot stat.
+    2. The provision commands of the storage admin are named as the exception to "the API writes
+       the share" in `architecture.md` (intro, the state table), `user-guide.md` (glossary
+       "share"), `README.md`, `how-huron-works.md`, `raw-ingest.md` and ADR 0008. The API does
+       not write the markers. The export rules of `operator.md` and `deploy/README.md` give the
+       storage admin's machine a read-write mount.
+    3. `raw-ingest.md` "The marker": a symbolic link and a marker that the account cannot read,
+       for `huron adm verify-mounts` and `huron adm check`. The behaviour of `verify-mounts` is a
+       code defect (below).
+    4. `operator.md`, the findings table: `mode_drift` states that repair fixes the bits only
+       while the API is in the directory's group, and gives `chmod 2750` as root and
+       `huron adm provision-catalogs`. Each row was checked against the code. `file_missing`
+       and `file_changed` now say that a replace or a removal of a file with another inode
+       blocks with `foreign_entry`, and give the order that works. `symbolic_link` points to the
+       work to run again.
+    Also: `user-guide.md` gives the default of `upload_hook_timeout` (15 minutes) and the 60 s of
+    the base and the development stacks. Rule 8 of `architecture.md` names
+    `core.lake.publications.planning`. Self-review: 344 added lines with an absolute word were
+    read. These changed: the "one writer" sentences of `README.md`, ADR 0008,
+    `architecture.md` (three), `how-huron-works.md` (two) and `raw-ingest.md` (two), the
+    export rules and the read-write mounts of `operator.md` (three) and `deploy/README.md`,
+    the space of the object area in `operator.md`, and "each request but `OPTIONS`" in
+    `user-guide.md`.
+  - Verification 5 (2026-11-13): FAIL with two medium and two small findings. Fix pass 6:
+    1. The standing read-write export for the storage admin's machine (fix pass 5) is reverted.
+       `operator.md` (Prerequisites, "The export rules", the new "Where the storage admin
+       works", "Adding an organization", "Share groups", "Install order"), `deploy/README.md`
+       ("The export rules", "Install order", "Preparing the organization directories") and
+       `architecture.md` (the NFS share row) now say what `IMPLEMENTATION_PLAN.md` says: the
+       export is read-write only for the clients of the API pod and the upload pod (lines 360 to
+       362); the root scripts run on a machine with a writable mount, "the storage system's own
+       shell, or a client that the export does not squash" (lines 1456 to 1458); step 5 of the
+       design makes the export read-only for every other client after the provisioning. The
+       install order keeps the plan-4 change that the lake path and the organizations are
+       prepared before the deploy, with `--config`. "Clients mount the share read-only" became
+       "Workstations …" in `raw-ingest.md` and `access-and-roles.md`.
+    2. `operator.md`, new section "Missing or changed files": how an operator compares the
+       recorded inode (`huron.files.inode`) with `stat -c %i`; the order before a push; after a
+       block with no done entry (abandon, then `huron rm` two times); after a block with a done
+       entry (no procedure, to the developers). The text says that these steps are derived
+       from the code and not run. The 10-minute wait before exit code 6 is stated in
+       `user-guide.md`, `raw-ingest.md` and `operator.md`.
+    3. `operator.md`, the `mode_drift` row: the command for each kind of entry (a declared
+       organization, an organization that is not declared, a catalog, namespace or collection,
+       a directory inside a collection, a file).
+    4. The writer exception reads "apart from tusd's own files and the provision commands" in
+       `README.md`, `architecture.md` (intro and the alt text) and the `<desc>` of both
+       component diagrams.
+  - Open question for the owner (fix pass 6): where does the storage admin run a provision
+    step after step 5 of the install order, when the export is read-only for every client but
+    those of the API pod and the upload pod? `IMPLEMENTATION_PLAN.md` lines 1455 to 1482 give
+    a writable, unsquashed machine for the install only. Later steps need it too:
+    `huron adm provision-orgs` for a new organization, `huron adm provision-catalogs` for each
+    new catalog with a share group, a `chmod` as root for `mode_drift`, and the deletion of a
+    file in "Missing or changed files". Is an in-cluster Job on the read-write claim, as
+    `deploy/local/lake-init-job.yaml` does for the local cluster, the production route? The
+    documents say that the design gives no route.
+    Facts from the code, added in fix pass 7, not a recommendation: `oc exec` into the API pod
+    reaches the API at `127.0.0.1:8080` also while the pod is not ready, because readiness only
+    takes the pod out of the Service. The pod runs as `U` with the lake mounted read-write.
+    `huron adm provision-orgs --config <file>` makes no API request
+    (`src/huron/applications/cli/provisioning.py` `from_file`). As `U`, the provision steps
+    (`src/huron/core/storage/provision.py` `_directory`, through `PosixStorage.make_directory`
+    and `huron.pkg.fs.posix.make_dir`, a `mkdirat` then an `fchmod`) can make `<root>/<org>`
+    when `U` may write the root: as its owner, through `G`, or through other. `set_owner` and
+    `set_mode` then need no root, because `U` owns the new directory and is in `G`, and
+    `change_owner` makes no `chown` for an entry that has the owner already. As `U` they cannot
+    make a directory in a root that `U` may not write, and cannot give an entry another owner.
+    Each run also prepares the lake path and `.tus-uploads` (`prepare_lake`). As `U` this works
+    only while `U` owns the lake path and, when it exists, `.tus-uploads`. `U` can set the group
+    `G` itself. `huron adm provision-catalogs` gives
+    a share group, which `U` can do only as a member of that group. In the pod, `/etc/huron/huron.yaml` is the applied configuration,
+    not an edited one, and the image does not resolve `service_group`, so `--gid` is needed.
+    The user documents do not give this route.
+  - Design gaps recorded by D6 (no procedure in the code):
+    - A request with a done entry and a lost object, when no copy with the same SHA-256 exists
+      (`operator.md`, "A request with done entries and a lost object").
+    - A request with a done entry that blocks on a missing recorded file, or on a recorded file
+      with another inode: a retry blocks again with `foreign_entry` (`AddFile.old_inode` in
+      `src/huron/core/storage/publication.py`, `_add`), and an abandon is refused
+      (`_abandon` in `src/huron/core/lake/publications/operations.py`).
+      An unverified idea for the developers, not documented: an operator could write the inode
+      of the file now at the path into `huron.files.inode` before a retry, because the step reads
+      the old inode from that row (`_targets`, `src/huron/core/lake/publications/operations.py`
+      lines 546 to 557). Nobody has checked this.
+  - Verification 6 (2026-11-13): FAIL with one medium and five low findings. Fix pass 7:
+    1. `operator.md` "Adding an organization", the `org_dir_missing` row and `deploy/README.md`
+       "Preparing the organization directories": the new organization is prepared first, with
+       `huron adm provision-orgs --config <edited huron.yaml> --org <org>`, which makes no API
+       request, and the configuration is applied after it. While a declared organization has no
+       directory or marker, the API is not ready for every organization. The text on `--config`
+       names `service_uid`, the resolution of `service_group` on the machine, `--uid` and
+       `--gid`.
+    2. `deploy/README.md`: "steps 5 and 8 of the install order, before step 9".
+    3. and 4. `operator.md` "Missing or changed files": the signed inode has one wording in both
+       places, and the operator gets the collection ID and the path in the collection from the
+       finding with `huron -o json describe collection` and `huron get files`.
+    5. The changed-in-place case stages the file with `huron add … --as …` before `huron push`.
+    6. `huron rm` and `huron add` stop until a `huron push` gets the end of the request.
+    Also: the storage admin moves the file away or keeps a copy before a delete; the backup text
+    covers `.tus-uploads` on another filesystem; the provision commands also give catalog
+    directories their share groups (`README.md`, `raw-ingest.md`, `how-huron-works.md`, the
+    glossary). The open question and the design-gap record have the facts above.
+  - Verification 7 (2026-11-13): FAIL with one low finding in this record. Fix pass 8: the
+    facts in the open question now give the code's condition for `U` (a root that `U` may write:
+    as its owner, through `G`, or through other), and add that each run also prepares the lake
+    path. Residual notes: install step 7 of `operator.md` runs `verify-mounts` on the machine of
+    step 5 and skips the second `provision-orgs`; "First steps after deployment" names the
+    machine it needs; install step 5 of `deploy/README.md` uses only the two `provision-orgs`
+    lines of its block, and step 7 runs `verify-mounts`; "Then" became "In that case".
+  - Verification 8 (2026-11-13): FAIL with two low text findings. Fix pass 9: the open question
+    now gives the condition of `prepare_lake` for `U` (it owns the lake path and an existing
+    `.tus-uploads`; it can set `G` itself). `operator.md` "The mount prefix" says that
+    `provision-orgs` runs as root, or as `U` while `U` owns the lake path. Residual notes:
+    install step 5 of `operator.md` sets `mount_prefix` first and states the `lake_path` check;
+    steps 5, 7 and 8 of both pages name a client with the CLI and a lake mount where the CLI is
+    needed, and the emitted root scripts for the storage system's own shell, with the same lake
+    path there and, for the catalog script, share group names that the shell resolves;
+    `deploy/README.md` names a missing `service_group` as a reason for `--gid`; the label of
+    implementation pass 1 no longer says "not yet verified".
+  - Verification 9 (2026-11-13): FAIL with one low finding. Fix pass 10: `operator.md` "The mount
+    prefix" now says only that `provision-orgs` writes the marker as root. The clause for `U` left
+    out that `U` must also own an existing `.tus-uploads` (`prepare_lake`).
+  - Defect for a later code task (found in D6, not fixed: D6 changes no code):
+    - The help of `huron adm check` (`src/huron/applications/cli/commands/adm.py` lines 198 to
+      200) and its generated reference
+      (`web/docs-site/src/content/docs/reference/cli/adm.md` lines 116 to 118) say that a
+      complete check needs the service user, "for example in an API pod", and that an account
+      in the service group and every share group "can also do a complete check". In the API
+      pod the CLI resolves no LDAP group, so each catalog with a share group gives
+      `share_group_mismatch`. An account in `G` does not see the object areas.
+      `docs/operator.md` "Reading `huron adm check`" gives the true behaviour.
+    - The comment of `MAX_UPLOAD_HOOK_TIMEOUT` (`src/huron/applications/api/settings.py`
+      line 61) says that the hook timeout stays below the 3600 s of nginx. nginx waits 120 s
+      (`deploy/openshift/nginx-uploads.conf.template`, `proxy_read_timeout`).
+    - `huron adm verify-mounts` stops at the first organization whose marker it cannot read or
+      whose directory or marker is a symbolic link, with no row for the others. `marker_state`
+      (`src/huron/core/storage/marker.py` lines 140 to 149) raises again a `StorageError` that
+      has no `state`, and `_mount_row` (`src/huron/applications/cli/commands/adm.py` lines 666
+      to 672) does not catch it. The command then exits with `SYMLINK_IN_LAKE` and code 1, or
+      with `STORAGE_FAILED` and code 8. For the marker at the mount prefix, `prefix_state`
+      (`src/huron/applications/cli/mount.py` lines 126 to 130) turns the same errors into exit
+      code 8. `docs/concepts/raw-ingest.md` "The marker" describes this behaviour.
 
 ### D7 Helm chart and production values (old M11.13)
 
@@ -605,9 +866,14 @@ a removal is a step of a commit, and cleanup selects by database ID. Do not buil
   - The chart allows one writable replica only. The schema refuses another value.
   - The values include the capacity settings and the upload lifetime, with no unlimited default.
 - Open item: Helm is not on this workstation. The owner supplies Helm 3 or a cached image.
+  Closed (2026-11-13): by the owner's instruction, Helm v3.22.1 is installed in
+  `~/.local/bin/helm` from `get.helm.sh`, with the published SHA-256 checked.
 - Verification: the old task's entry.
 - Dependencies: D5, D6.
-- Status: pending
+- Owner decision (2026-11-13): "yes, run D7 after D6 passes". D7 runs before D5. The chart and
+  its notes give no measured value for the export. Where a text or a value depends on a D5
+  result, it says that the measurement is not yet made.
+- Status: in progress
 
 ## Escalation (D2, 2026-11-12)
 

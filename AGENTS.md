@@ -13,11 +13,12 @@ src/huron/
   core/
     security/      broker/ (OIDC exchange, Huron tokens) and rbac/ (roles, privileges, grants)
     lake/          the domain: one subpackage per area (organizations, catalogs, namespaces,
-                   collections, files, schemas, audit)
+                   collections, files, schemas, audit, uploads, publications, repairs)
     metastore/     PostgreSQL adapters and in-memory fakes, one subpackage per area
-    storage/       share layout, modes, POSIX storage, drift check (used by the API and the CLI)
+    storage/       share layout, modes, POSIX storage, seal, publication, repair, provisioning,
+                   drift check (used by the API and the CLI)
   applications/
-    api/           FastAPI service; routes/v1/{endpoints,schema}
+    api/           FastAPI service; routes/v1/{endpoints,schema}; disk/ holds the lake work
     cli/           Typer CLI; commands/ holds one module per verb group
 migrations/        Alembic environment and versions
 tests/             unit/ contract/ integration/ fakes/ support/

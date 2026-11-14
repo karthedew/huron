@@ -133,8 +133,8 @@ that must stay restricted has its own groups and no organization-wide readers.
 To get a role, ask an administrator of the catalog or of the organization to add you to the
 applicable LDAP group. The change applies at your next `huron login`.
 
-[Access and roles](concepts/access-and-roles.md) explains the roles, their scopes and how they
-become directory ACLs.
+[Access and roles](concepts/access-and-roles.md) explains the roles and their scopes. It also
+tells how the share group of a catalog gives read access on the share. Huron uses no ACLs.
 
 ## Where your files are
 
@@ -187,14 +187,18 @@ Huron reserves the name. Then it does these steps:
 
 1. It asks for each required metadata field of the catalog schema, and it offers the optional
    fields.
-2. It creates the directory with the applicable permissions.
-3. It activates the collection.
-4. It writes `metadata.json` next to your files.
+2. It activates the collection.
+3. The service creates the directory with the applicable permissions.
+4. The service writes `metadata.json` into the directory.
 5. It selects the collection as the current collection.
 
 Use `--metadata file.json` to skip the questions. Use `--draft` to stop before activation. Then run
 `huron activate collection` later. With `--draft`, Huron stops after step 1, and the draft becomes
 the current collection.
+
+The service activates the collection before it creates the directory. When the disk work fails,
+the collection stays active, and the error has the hint to run `huron adm repair`
+([Repairing directories](#repairing-directories)).
 
 [The collection lifecycle](concepts/how-huron-works.md#the-collection-lifecycle) explains the
 states of a collection.
@@ -283,8 +287,8 @@ hint: to stage the file again, run `huron add /home/you/data/kp-q1.txt --as kp/q
 ```
 
 The service compares the SHA-256 hash of the bytes that it sealed with the recorded hash. When the
-two hashes are not equal, the service refuses the commit with `UPLOAD_INELIGIBLE` and exit code 6.
-Then stage the file again with `huron add`, and run `huron push` again.
+two hashes are not equal, the service refuses the commit with `UPLOAD_INELIGIBLE`, and the push
+stops with exit code 6. Then stage the file again with `huron add`, and run `huron push` again.
 
 Before `push` uploads anything, it asks the service whether the service would accept the commit.
 In these cases, the push stops with the error and uploads nothing:
@@ -305,7 +309,9 @@ To push in parts, unstage some paths with `huron rm <path>`, and push the other 
 those paths again with `huron add` or `huron rm`, and push again.
 
 Otherwise, `push` uploads each file to the service and records the batch in one commit. The
-service puts the files on the share. When you unstage a file with `huron rm` during its upload,
+service puts the files on the share. While the service works on the commit, the directory on the
+share can hold some new files and some old files. The service shows the new files when the commit
+succeeded. When you unstage a file with `huron rm` during its upload,
 the commit of that push does not include the file.
 
 If something interrupts the push, run it again. The push does not upload a file again when the
@@ -328,24 +334,44 @@ state of each upload, and continues from that state:
 
 - It sends only the bytes that the service does not have.
 - For a file that the service has completely, it waits for the seal. The wait lasts at most the
-  hook timeout, `upload_hook_timeout`, a setting of the service (15 minutes by default). When the
-  seal does not end in that time, the push stops with exit code 8:
+  hook timeout, `upload_hook_timeout`, a setting of the service. Its default is 15 minutes, and
+  the Kustomize base and the development stacks set 60 seconds. When the seal does not end in
+  that time, the push stops with exit code 8:
   `the service did not seal <path> in <seconds> seconds`. Run `huron push` again.
 - It does not send a file again when the service sealed its upload.
 
 A timeout or an interruption does not make a second upload of a file. The CLI sends a file again
 from its first byte only when the service ended the upload or does not have it.
 
-The CLI sends a file in parts of at most 64 MiB. When the connection drops during the last part,
-the CLI asks the service how many bytes arrived. When bytes of that part arrived, the push
-continues. When no byte of that part arrived, the push stops with exit code 1:
+The CLI sends a file in parts of at most 64 MiB. The answer to the last part can be unclear:
+the connection drops, no answer comes in time, or the answer is 500, 502 or 504. Then the CLI asks
+the service for the state of the upload, and tusd for the number of bytes that arrived:
+
+- The upload is complete: the CLI waits for the seal, as above.
+- Bytes of that part arrived: the push sends the rest of the file.
+- tusd no longer has the upload: the push starts the upload of the file again, from the first
+  byte.
+- No byte of that part arrived: the push stops with exit code 1.
+
+After a dropped connection, the error is this:
 
 ```text
 error: the upload service at … is unreachable: …
 hint: run `huron push` again. The next push continues the upload
 ```
 
-When the connection drops during a different part, the push stops with the same error and hint.
+After a 500, 502 or 504, the error is `the upload service answered HTTP <status>`, with the same
+hint. When the connection drops during a different part, the push stops with the first error and
+its hint.
+
+The upload proxy checks your Huron token on each request but `OPTIONS`. Two answers of the proxy stop the push:
+
+- 401: `the upload proxy did not accept your token`, with exit code 3. Your token expired or is not
+  valid. Run `huron login`, then run `huron push` again.
+- 403: `this upload belongs to another user, or it does not take bytes now`, with exit code 4. The
+  upload was started with the token of another user, or the upload no longer takes bytes. For
+  example, the service sealed it or it expired. Run `huron push` again. The push reads the state of
+  the upload and continues from that state.
 
 The CLI saves each commit in the working copy before it sends it. When the push does not get the
 result of the commit, the commit stays saved, and `huron status` shows this line:
@@ -361,7 +387,7 @@ the result. This push sends no other changes, and it does one of these:
 | --- | --- | --- |
 | The commit succeeded. | It unstages the committed changes and records the new version: `version 4 → 5, +1 −1 files`. | When `huron status` still shows staged changes, run `huron push` again. |
 | The service still works on the commit. | It gets the state again every 5 seconds, for at most 600 seconds. Then it stops with exit code 1: `the service accepted the commit, but did not finish it in 600 seconds`. The commit stays saved. | Run `huron push` again later. |
-| The service blocked a step of the commit. | It waits in the same way. Then it stops with exit code 6: `the service accepted the commit, but a step of it is blocked [PUBLICATION_BLOCKED]`. The commit stays saved. | Ask a platform administrator to resolve the commit request. Then run `huron push`. |
+| The service blocked a step of the commit. | It gets the state again every 5 seconds, for at most 600 seconds (10 minutes). Then it stops with exit code 6: `the service accepted the commit, but a step of it is blocked [PUBLICATION_BLOCKED]`. The commit stays saved. | Ask a platform administrator to resolve the commit request. Then run `huron push`. |
 | The service refused the commit. | It shows the error of the refusal. The CLI clears the saved commit and keeps the stage. | Correct the cause that the error gives. Then run `huron push`. |
 | A platform administrator abandoned the commit. | It stops with exit code 6: `a platform administrator abandoned the commit`. The CLI clears the saved commit and keeps the stage. | Run `huron push` again. |
 | The service does not have the commit. | It sends the same commit again, with the same request ID. Then it does what the row of the result of that commit tells. | Do what the row of that result tells. |
@@ -417,11 +443,65 @@ huron unset override
 [Metadata and schemas](concepts/metadata-and-schemas.md) explains the schemas, the overrides and
 what Huron does when metadata does not match its schema.
 
+## Share groups of a catalog
+
+The share group of a catalog is the POSIX group whose members read the catalog directory on the
+share. An Org Admin sets it:
+
+```bash
+huron create catalog heliophysics --share-group huron-helio-readers
+huron set catalog heliophysics --share-group huron-helio-readers
+huron set catalog heliophysics --no-share-group   # the service group again
+```
+
+The service tries to give the catalog directory the group. Usually it cannot, because the service
+user is not a member of that group. Then the command prints a warning with the code
+`SHARE_GROUP_PENDING` and this hint:
+
+```text
+hint: to set the group on disk, run `huron adm provision-catalogs --emit-script` as the storage administrator
+```
+
+The storage administrator then sets the group on the share. Until then, the members of the share
+group cannot read the catalog directory. A role in Huron does not give read access on the share,
+and a share group does not give a role in Huron.
+
+## Repairing directories
+
+`huron adm repair` asks the service to make missing directories again and to correct their
+permission bits:
+
+```bash
+huron adm repair heliophysics.solar-wind --recursive   # a namespace and everything below it
+huron adm repair --org helio                           # the directory of an organization
+```
+
+The service makes each directory that its rows plan, from the catalog to the identifier. With
+`--recursive`, it also repairs each namespace and each collection below the identifier. It tries
+to give the catalog directory its share group, and it writes each `metadata.json` that is not
+correct. A repair needs the Catalog Admin role, and `--org` needs the Org Admin role.
+
+The command prints `changed <path>` for each path that the service changed. For each path that
+the service could not repair, it prints `failed <path> (<reason>): <detail>`, and the command
+exits with code 8. The reason is one of these:
+
+| Reason | Meaning |
+| --- | --- |
+| `mode_drift` | The service cannot give the directory its mode. The directory has no setgid bit or not the group of the catalog directory, or the service is not in its group. A new directory did not get the setgid bit and the group of its parent. The detail tells which. Most details say that the storage administrator must run `huron adm provision-catalogs`. |
+| `symbolic_link` | A symbolic link is on the path. The storage administrator must remove it. |
+| `storage_failed` | The disk operation failed. The detail names the cause. |
+
+A repair takes a directory that exists as it is, also when files are in it. A create command that
+stops with `STORAGE_FAILED` and `exists and is not an empty directory` also gives the hint to run
+`huron adm repair`. Look at that directory before you repair: the repair keeps the files in it,
+and `huron adm check` then reports them as unrecorded.
+
 ## Deleting
 
 `huron delete collection solar-wind.run7` deletes every recorded file, the collection and its
-directory. Its creator or a catalog admin may delete it. Files that nobody recorded stop the
-delete, so you lose nothing of yours.
+directory. Its creator or a catalog admin may delete it. The CLI first commits the removal of the
+recorded files. A file that no commit recorded stays in the directory, and the directory then stays
+too. `huron adm check` reports it as `dir_unrecorded`.
 
 ## Exit codes
 
@@ -455,6 +535,6 @@ An error prints `error: <message> [<code>]` and often a `hint:` line.
 | stage | The adds and removals that the next push holds. Each working copy has its own stage. `huron add` and `huron rm` change it. |
 | push | The command that uploads the staged files to the service and records the batch in one commit. |
 | pull | The command that updates the working copy to the current version of the collection on the service. |
-| share | The NFS exports that hold the directories of the organizations, mounted at the same path on each machine that runs the CLI. |
-| root | An absolute path that the service configuration sets for an organization. The directory of the organization is then `<root>/<name>`. Without a root, the directory is under the `mount_prefix`. |
-| marker | The `.huron` file in the directory of an organization. It names the instance of the service and the organization. The CLI touches the directory only when its marker names this instance and this organization. An organization without its own marker uses the marker at the mount prefix, which names only the instance. |
+| share | The NFS exports that hold the directories of the organizations. The service writes them. The provision commands of the storage admin also prepare the organization directories, write their markers and give the catalog directories their share groups. A machine that runs `huron status` or `huron adm check` mounts them read-only, at the same path on each machine. A push does not need the share. |
+| root | An absolute path that the service configuration sets for an organization. The directory of the organization is then `<root>/<name>`. Without a root, the directory is directly below the lake path of the service, and on your machine below the `mount_prefix`. |
+| marker | The `.huron` file in the directory of an organization. It names the instance of the service and the organization. The service and the CLI use the directory only when its marker names this instance and this organization. An organization without its own marker uses the marker at the lake path, which names only the instance. |

@@ -157,9 +157,10 @@ The CLI prints the counts, for example
 changed collection is then behind the service. Its next push stops with `BASE_VERSION_CONFLICT`
 ([When someone else changed the collection](../user-guide.md#when-someone-else-changed-the-collection)).
 
-The service does not write to the share. Thus the `metadata.json` of each active and incomplete
-collection still names the old schema, and `huron adm check` reports `sidecar_stale`
-([The metadata.json sidecar](#the-metadatajson-sidecar)).
+With a lake, the service then writes the `metadata.json` of each active and incomplete collection
+whose document changed. Thus each file names the new schema
+([The metadata.json sidecar](#the-metadatajson-sidecar)). When that disk work fails, the
+assignment stays, and `huron adm check` reports `sidecar_stale`.
 
 ## Collection schema overrides
 
@@ -295,13 +296,13 @@ problems. The CLI uses the schema that it reads from the service and the same va
 service.
 
 `huron publish meta` needs a metadata draft. Without one, it stops with exit code 2 and the hint
-`run huron edit meta`. After a successful publish, the CLI does these steps:
+`run huron edit meta`. When the collection has a directory, the service writes `metadata.json`
+again after the change. After a successful publish, the CLI does these steps:
 
-1. It writes `metadata.json` again, when the collection has a directory.
-2. It deletes the metadata draft.
-3. It records the new version in the working copy, when the working copy had the version that the
+1. It records the new version in the working copy, when the working copy had the version that the
    CLI read before the publish.
-4. It prints `published <identifier> at version <N>`.
+2. It deletes the metadata draft.
+3. It prints `published <identifier> at version <N>`.
 
 The patch turns the published metadata into your metadata draft. Thus a field that someone else
 published after you started your draft gets the value of your draft. When your draft does not
@@ -348,14 +349,17 @@ uses the `base_version` in its body instead of `If-Match`. A stale `base_version
 
 ## The metadata.json sidecar
 
-The CLI writes a `metadata.json` file into the directory of each active and incomplete collection.
-The file keeps the metadata on the share, apart from the service. The CLI writes it at these times:
+The service writes a `metadata.json` file into the directory of each active and incomplete
+collection. The file keeps the metadata on the share, apart from the service. The service writes
+it at these times:
 
 - After activation, by `huron create collection` and `huron activate collection`.
 - After each change by `huron publish meta`, `huron set override` and `huron unset override`.
+- After a schema assignment of the catalog, when the document of the collection changed.
+- At `huron adm repair`, when the file on the share is not the document of the service.
 
-The CLI does not make the file itself. It writes the bytes that
-`GET /api/v1/collections/{id}/metadata.json` returns. The file is canonical JSON (RFC 8785) with a
+The service writes the bytes that `GET /api/v1/collections/{id}/metadata.json` returns. It writes
+the file only when its bytes differ. The file is canonical JSON (RFC 8785) with a
 newline at the end, and it holds these members:
 
 | Member | Content |

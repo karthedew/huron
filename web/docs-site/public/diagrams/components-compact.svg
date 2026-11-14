@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="360" height="920" viewBox="0 0 360 920" role="img" aria-labelledby="title desc">
   <title id="title">Huron components</title>
-  <desc id="desc">The browser uses the web server. The web and CLI call the API, which stores records in PostgreSQL. At token exchange, the API checks the company token and reads the user's groups. Only the CLI accesses the NFS share.</desc>
+  <desc id="desc">The browser uses the web server. The web and CLI call the API, which stores records in PostgreSQL. At token exchange, the API checks the company token and reads the user's groups. Only the API writes the NFS share, apart from the files of its upload service and the provision commands of the storage administrator.</desc>
   <style>
     svg { --panel: #f5f8f8; --card: #ffffff; --ink: #18282c; --muted: #4e6269; --border: #b4c7c9; --accent: #00766a; --tint: #e2faf6; font-family: system-ui, sans-serif; }
     .panel { fill: var(--panel); stroke: var(--border); }
@@ -65,10 +65,10 @@
   <text class="heading" x="28" y="768">03 · FILE ACCESS</text>
   <path class="edge" d="M 160 832 H 198" />
   <rect class="card" x="28" y="800" width="132" height="64" rx="10" />
-  <text x="94" y="827">Huron CLI</text>
-  <text class="detail" x="94" y="848">NFS mount</text>
+  <text x="94" y="827">Huron API</text>
+  <text class="detail" x="94" y="848">Read-write mount</text>
   <rect class="primary" x="200" y="800" width="128" height="64" rx="10" />
   <text x="264" y="827">NFS share</text>
   <text class="detail" x="264" y="848">File bytes</text>
-  <text class="detail" x="180" y="891">Files, directories, sidecars and ACLs</text>
+  <text class="detail" x="180" y="891">Files, directories and sidecars</text>
 </svg>

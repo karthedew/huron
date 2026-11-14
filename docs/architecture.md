@@ -2,9 +2,11 @@
 
 Huron catalogs raw scientific data on an NFS share and controls who can read and write it. The
 service records organizations, catalogs, namespaces, collections, files, grants and the audit log
-in PostgreSQL. It never opens the share. The `huron` CLI runs on the machines that mount the share,
-and it is the only part that writes files and directories there. The web is a read-only view of
-the catalog in a browser. This page describes each part, the rules between the parts, where each
+in PostgreSQL. The service also holds the share read-write. It is the one writer of the lake,
+apart from tusd's own files and the provision commands of the storage admin. It makes the
+directories, writes each `metadata.json` and publishes each committed file. The `huron` CLI
+uploads files through tusd and commits them. It reads the share on machines that mount it
+read-only. The web is a read-only view of the catalog in a browser. This page describes each part, the rules between the parts, where each
 part keeps its state, and how the parts work together. The [glossary](user-guide.md#glossary)
 defines the Huron terms.
 
@@ -13,25 +15,28 @@ defines the Huron terms.
 <figure class="architecture-components">
   <picture>
     <source media="(max-width: 89.99rem)" srcset="/docs/diagrams/components-compact.svg" width="360" height="920" />
-    <img src="/docs/diagrams/components.svg" width="720" height="584" alt="Clients call the API, which stores records in PostgreSQL. The browser uses the web. Only the CLI accesses NFS. The API checks company tokens and reads groups." />
+    <img src="/docs/diagrams/components.svg" width="720" height="584" alt="Clients call the API, which stores records in PostgreSQL. The browser uses the web. Only the API writes the NFS share, apart from the files of its upload service and the provision commands of the storage administrator. The API checks company tokens and reads groups." />
   </picture>
   <figcaption>Catalog requests, identity checks and file access follow separate paths.</figcaption>
 </figure>
 
 The CLI and web sign in with the company OIDC provider. Each exchanges its company ID token at the
 API for a Huron token. The API checks the ID token and calls the group directory at each exchange.
-The web then reads the catalog through the API. Only the CLI touches the share.
+The web then reads the catalog through the API. The API and tusd write the share. The CLI sends
+file bytes through the upload proxy to tusd, and it reads the share. The one exception is the
+provision commands of the CLI, which the storage admin runs. They prepare the lake path and the
+organization directories, write the markers and set the groups of the catalog directories.
 
 | Part | Runs on | Does |
 | --- | --- | --- |
-| `huron-api` | OpenShift, from the Helm chart or the kustomize base | Exchanges company ID tokens for Huron tokens. Records the catalog, the schema registry, the grants and the audit log. From the kustomize base, it mounts the lake read-write as its one writer. From the Helm chart, it has no access to the share. |
+| `huron-api` | OpenShift, from the kustomize base or the Helm chart | Exchanges company ID tokens for Huron tokens. Records the catalog, the schema registry, the grants and the audit log. From the kustomize base, it mounts the lake read-write as its one writer: it makes the directories, seals the uploads and publishes the commits. From the Helm chart, it has no access to the share yet. |
 | `huron-uploads` | OpenShift, from the kustomize base | Runs nginx and tusd in one pod with one replica. nginx asks the API to authorize each upload request except `OPTIONS`, and tusd writes the upload into `.tus-uploads`. |
 | PostgreSQL | OpenShift or a managed server | Holds the schema `huron`, which is the catalog of record. |
-| `huron` CLI | The machines that mount the share | Signs the user in, browses, creates directories with their ACLs, copies files onto the share, commits them, and checks for drift. |
+| `huron` CLI | Workstations, with or without a read-only mount of the share | Signs the user in, browses, uploads files through the upload proxy, commits them, and asks the API to make directories. On a machine with the mount, it also checks for drift. The storage admin prepares the lake with its provision commands. |
 | `huron-web` | A Node.js server, next to the API | Signs people in with the company OIDC provider and shows the catalog. It only reads. It also serves this documentation at `/docs`. |
 | Company OIDC provider | External | Issues the company ID token that the CLI and the web exchange. |
 | Group directory | External | Answers `GET <group_directory_url>/users/{username}/groups` with `{"groups": [...]}`. |
-| NFS share | External | One or more exports that hold the directory of each organization. |
+| NFS share | External | One or more exports that hold the directory of each organization. The API pod and the upload pod mount it read-write. Workstations mount it read-only. The storage admin prepares it as root on a machine with a writable mount ([Install order](operator.md#install-order)). |
 
 ## The service
 
@@ -48,7 +53,8 @@ The routes are these:
   `lake_path`, the check `lake` also needs a `.tus-uploads` directory that the API can write.
   The API also makes a hard link from the object area into each declared organization directory,
   then removes it. A second API process that finds the writer lock held writes nothing. Its
-  check `lake` needs only the `.tus-uploads` directory, and it serves reads only.
+  check `lake` needs only the `.tus-uploads` directory, and it serves reads only. After the
+  writer loses its lock, its check `lake` fails.
 - `/.well-known/openid-configuration` and `/jwks.json`: discovery documents, so that other systems
   can check Huron tokens.
 
@@ -69,19 +75,44 @@ replicas that start together run it one after the other. It does these steps:
 
 A second run with the same configuration writes nothing.
 
-The service has three packages in `core`:
+The service uses the four packages of `core`:
 
 - `core.lake` is the domain. It has one package for each area: organizations, catalogs,
-  namespaces, collections, files, schemas and audit. Each operation takes the actor and checks the
-  privilege of the actor in the same transaction as the change.
+  namespaces, collections, files, schemas, audit, uploads, publications and repairs. Each
+  operation takes the actor and checks the privilege of the actor in the same transaction as the
+  change.
 - `core.security` has two parts. `broker` checks company ID tokens, gets the groups of the user,
   and issues and checks Huron tokens. `rbac` holds the five roles, their privileges and the
   `Authorizer`, which maps the groups of an actor to roles through the current grants.
 - `core.metastore` holds the adapters of the lake ports. `PostgresStore` uses asyncpg and
   hand-written SQL. `MemoryStore` keeps the same data in memory. The setting `store` (`postgres`
   or `memory`) selects one. The unit tests and the web's end-to-end stack use the memory store.
+- `core.storage` does every disk operation on the lake, through one `Storage` port on `LakePath`
+  values. `PosixStorage` opens each name of a path with no follow, so a symbolic link stops the
+  operation. The CLI uses the same package to read the share and to provision it.
 
 Every store passes the same contract test suite, against PostgreSQL and against the memory fake.
+
+### The lake
+
+With `lake_path`, the service holds the lake read-write. The code is in `applications/api/disk/`:
+
+- `lake.py` (`LakeDisk`) is the one gate to the lake. It checks the marker of the organization
+  before each action, and it runs each disk call in a pool of 8 threads.
+- `ownership.py` holds the writer lock, a PostgreSQL session advisory lock. Only the process that
+  holds it passes the gate ([One writer](operator.md#one-writer)).
+- `directories.py` makes and removes the directories of the directory verbs, gives a catalog
+  directory its share group and writes `metadata.json`. `repair.py` runs `huron adm repair`.
+- `sealing.py` seals a complete upload: it copies the file of tusd into the object area
+  `<root>/<org>/.huron-objects/` and measures the copy.
+- `publications.py` publishes each accepted commit request, one entry at a time
+  ([Publication of a commit](operator.md#publication-of-a-commit)).
+- `capacity.py` checks the free space for a new upload. `cleanup.py` removes the objects and the
+  files of tusd that no row needs ([Cleanup](operator.md#cleanup)).
+
+A directory verb (create, activate, publish, delete, schema assignment, share group) commits its
+rows first, then does its disk work in the same request. When the disk work fails, the rows stay,
+and `huron adm repair` makes the directories again.
 
 ## Requests and authorization
 
@@ -104,31 +135,36 @@ describes the roles from the view of a user.
 ## The CLI
 
 The CLI (`src/huron/applications/cli/`) is a synchronous Typer application. It talks to the API
-over HTTPS with `httpx`. It talks to the share through the local mount, with the package
-`core.storage`:
+over HTTPS with `httpx`, and to the upload proxy with the tus protocol (`cli/uploads.py`). It
+writes nothing to the share, apart from the provision commands of the storage admin. On a machine
+that mounts the share, it reads the share with the package `core.storage`:
 
 - `layout.py` maps identifiers to paths and paths to identifiers.
-- `aclplan.py` computes the mode and POSIX ACL of each kind of directory from the effective
-  groups of the catalog.
 - `posix.py` (`PosixStorage`) does the disk operations. `memory.py` is a fake with the same
   contract, for tests.
 - `marker.py` reads and checks the `.huron` marker files.
 - `check.py` compares what the service records with what is on the share, for `huron adm check`.
+- `provision.py` prepares the lake path, the organization directories and the groups of the catalog
+  directories, for `huron adm provision-orgs` and `huron adm provision-catalogs`.
 
-All disk access goes through `Mount` (`cli/mount.py`). `Mount` gets the root of the organization
-from the API and resolves each absolute path. It checks the marker of the organization before it
-gives a path to a command. The marker must name the `instance_id` that `GET /healthz` reports. A
-per-organization marker must also name the organization. Thus a CLI that points at another
-service writes nothing, and the CLI writes nothing into an export at the wrong root.
+All disk access of the CLI goes through `Mount` (`cli/mount.py`). `Mount` gets the root of the
+organization from the API and resolves each absolute path. It checks the marker of the
+organization before it gives a path to a command. The marker must name the `instance_id` that
+`GET /healthz` reports. A per-organization marker must also name the organization. The API checks
+the same marker before each disk action. Thus the API and the CLI use no export whose marker names
+another service or another organization.
 
-The CLI creates catalog and namespace directories after the service records them. For a collection,
-the service reserves a draft first. The CLI creates its directory before the service activates it.
-All these directories belong to the user who runs the CLI. The storage admin prepares the organization
-directories with [`huron adm provision-orgs`](/docs/reference/cli/adm/#huron-adm-provision-orgs).
+The CLI asks the API to make each catalog, namespace and collection directory. For a collection,
+the service reserves a draft first, and the API makes the directory when it activates the
+collection. The service user `U` owns these directories. The storage admin prepares the lake path
+and the organization directories with
+[`huron adm provision-orgs`](/docs/reference/cli/adm/#huron-adm-provision-orgs).
 
-Enforcement is contain-and-detect. A contributor can write into a collection directory without the
-CLI, and the service trusts the sizes and hashes that the CLI reports. `huron adm check` finds the
-drift. [Reading `huron adm check`](operator.md#reading-huron-adm-check) explains each finding.
+Enforcement is contain-and-detect. Users mount the share read-only. The API and tusd write it,
+and the storage admin prepares it with the provision commands. The API hashes each upload itself when it seals it, and a commit names the sealed
+uploads. A process that writes the share outside Huron, for example as root on a read-write
+client, is not stopped. `huron adm check` finds the drift.
+[Reading `huron adm check`](operator.md#reading-huron-adm-check) explains each finding.
 
 ## The web
 
@@ -177,30 +213,34 @@ validator and the naming rules), `core` and `applications`. Import-linter contra
    `applications`.
 4. `core.lake` does not import `core.metastore`, `core.storage` or `applications`.
 5. Only `applications` import `core.metastore`.
-6. The API does not import the CLI or `core.storage`.
+6. The API does not import the CLI.
 7. The CLI does not import the API, `core.metastore` or `core.security.broker`.
-8. The `models` module of a lake area does not import the operation modules of any area.
+8. The `models` module of a lake area, and `core.lake.publications.planning`, do not import the
+   operation modules of any area.
+9. Only `core.storage` imports `huron.pkg.fs`, the filesystem primitives.
+10. `core.storage` does not import `applications` or `core.metastore`.
 
 ```text
-  applications.api ---> core.lake, core.security, core.metastore
-  applications.cli ---> core.storage, core.lake models, core.security.rbac
+  applications.api ---> core.lake, core.security, core.metastore, core.storage, pkg
+  applications.cli ---> core.storage, core.lake (organizations, publications), schema, pkg
 
-  core.metastore   ---> core.lake, core.security
-  core.storage     ---> core.lake models, core.security.rbac
-  core.lake        ---> core.security.rbac
-  core.security    ---> schema, pkg
+  core.metastore   ---> core.lake, core.security, pkg
+  core.storage     ---> schema, pkg (also pkg.fs)
+  core.lake        ---> core.security.rbac, core.security.broker.keys, schema, pkg
+  core.security    ---> pkg
   schema           ---> pkg
 ```
 
-Rule 6 is the reason that the API cannot touch the share. Rule 7 is the reason that the CLI uses
-the database only through the API.
+Rule 7 is the reason that the CLI uses the database only through the API. Rule 9 keeps each disk
+operation behind the one `Storage` port of `core.storage`.
 
 ## Where state lives
 
 | State | Where | Notes |
 | --- | --- | --- |
-| The catalog, recorded files, commits, schemas, grants, the audit log and the signing keys | PostgreSQL, schema `huron` | The catalog of record. Back it up. |
-| File bytes, `metadata.json` sidecars and `.huron` markers | The share | Only the CLI writes here. Huron keeps no file versions. |
+| The catalog, recorded files, commits, commit requests, upload attempts, objects, schemas, grants, the audit log and the signing keys | PostgreSQL, schema `huron` | The catalog of record. Back it up together with the lake ([Backups and recovery](operator.md#backups-and-recovery)). |
+| File bytes, `metadata.json` sidecars, `.huron` markers and the object areas `.huron-objects` | The share | The API writes the directories below an organization, the files, the sidecars and the objects. The provision commands of the storage admin make the organization directories and the object areas, and write the markers. Huron keeps no file versions. |
+| Uploads that tusd receives | `<lake_path>/.tus-uploads` | tusd writes the uploads. The API writes its readiness probe there and removes the files of tusd by upload ID. `huron adm provision-orgs` makes the directory, and the API makes it at startup when it is missing. |
 | The service configuration and the declared organizations | The file that `HURON_CONFIG_FILE` names, and `HURON_*` variables | Roots are configuration, not database rows. |
 | The CLI configuration and the current organization, catalog and collection | `$XDG_CONFIG_HOME/huron/config.yaml` (mode 0600) | `huron config` shows and sets the keys. `huron org`, `huron catalog` and `huron checkout` set the current values. |
 | Tokens and working copies | `$XDG_STATE_HOME/huron/` (mode 0700) | See below. |
@@ -271,8 +311,8 @@ The code is `push` in `cli/sync.py` and the tus client in `cli/uploads.py`.
 1. The CLI locks the working copy, so that two pushes of one working copy cannot run together.
 2. The CLI reads the collection. When its version is not the version of the working copy, the push
    stops with `BASE_VERSION_CONFLICT`. The push also stops when the collection is a draft.
-3. The CLI sends the commit as a dry run, without a request ID. An add carries its size, and an
-   add that an earlier push already uploaded also carries its SHA-256 and its upload ID. The
+3. The CLI sends the commit as a dry run, without a request ID. An add carries its path, its size
+   and its SHA-256, and an add whose upload an earlier push sealed also carries its upload ID. The
    service checks the right to write files, a pending commit, the base version and the paths, as
    for a real commit, and changes nothing. A refusal stops the push before the CLI sends a byte.
 4. For each add, the CLI records a new `attempt_id` in the stage and creates a tus upload with
@@ -295,9 +335,10 @@ The code is `push` in `cli/sync.py` and the tus client in `cli/uploads.py`.
    that is still accepted at the end of the wait, stops the push with a message.
 7. The CLI empties the stage and records the new version in the working copy.
 
-When the commit request fails without a problem document, the CLI reads the collection again. If
-the version increased and the service recorded each added file with its hash, the CLI accepts the
-commit as done.
+The CLI saves the commit, with its request ID, in the working copy before it sends it. When the
+push does not get the result, the commit stays saved. The next push reads the saved outcome of
+that request. When the service does not know the request, the push sends the same request ID and
+body again. The CLI never infers the result from the version of the collection.
 
 The dry run and the real commit use separate transactions. The dry run does not reserve the
 version while the CLI uploads files. Another change can make the real commit fail. The uploads of
@@ -342,33 +383,35 @@ Without the key, the service is in unmanaged mode, and platform admins create or
 `huron create org`. [Declared organizations](operator.md#declared-organizations) gives the fields
 and the rules. ADR 0007 (`docs/adr/0007-declared-organizations.md`) records the decision.
 
-The CLI has its own configuration, `config.yaml`. Its keys are `api_url`, `issuer`, `client_id`,
-`mount_prefix` and `acl_backend`. The variables `HURON_API_URL`, `HURON_ISSUER`, `HURON_CLIENT_ID`
+The CLI has its own configuration, `config.yaml`. Its keys are `api_url`, `issuer`, `client_id`
+and `mount_prefix`. The variables `HURON_API_URL`, `HURON_ISSUER`, `HURON_CLIENT_ID`
 and `HURON_MOUNT_PREFIX` override the file. The web reads only environment variables, such as
 `ORIGIN`, `HURON_API_URL` and `HURON_WEB_OIDC_ISSUER`.
 
 ## Organizations and their roots
 
 The service configuration can give an organization a `root`. The directory of the organization is
-then `<root>/<name>`. Without a root, the directory is `<mount_prefix>/<name>`, where
-`mount_prefix` is a setting of the CLI. Below the directory of the organization, the layout is
+then `<root>/<name>`. Without a root, the directory is `<lake_path>/<name>`. Every root is
+`lake_path` or a directory below it, and the service refuses to start with another root. On a
+workstation, the CLI finds an organization without a root below its `mount_prefix`, where the
+workstation mounts the lake path. Below the directory of the organization, the layout is
 `<catalog>/<namespace...>/<collection>`.
 
-The service never opens a root. The API reports paths relative to a root, which start with the name
-of the organization. It also reports the root: `root` and `path` on an organization, and
-`share_root` on its catalogs, namespaces and collections. The CLI and the web join `share_root` and
-the relative path. When `share_root` is `null`, they use their own mount prefix.
+The API reports paths relative to a root, which start with the name of the organization. It also
+reports the root: `root` and `path` on an organization, and `share_root` on its catalogs,
+namespaces and collections. The CLI and the web join `share_root` and the relative path. When `share_root` is `null`, they use their own mount prefix.
 
 ```text
-  organizations:                         on a machine that runs the CLI
+  organizations:                         the directory of the organization
     - {name: helio, root: /data1/huron}  -> /data1/huron/helio/heliophysics/...
     - {name: geo,   root: /data1/huron}  -> /data1/huron/geo/geoscience/...
-    - {name: astro}  (no root)           -> <mount_prefix>/astro/...
+    - {name: astro}  (no root)           -> <lake_path>/astro/...
+                                            (on a workstation: <mount_prefix>/astro/...)
 ```
 
 [Where your files are](user-guide.md#where-your-files-are) describes the paths for a user.
 [The mount prefix, for organizations without a root](operator.md#the-mount-prefix-for-organizations-without-a-root)
-describes the marker at the mount prefix.
+describes the marker at the lake path, which a workstation sees at its mount prefix.
 
 ## Deployment
 
@@ -380,8 +423,8 @@ Huron supports two ways to deploy the service on OpenShift. Both use the API ima
 | Service configuration | The value `config`, rendered as `huron.yaml` | `huron.yaml`, through a `configMapGenerator` |
 | Migrations | A Job that is a `pre-install,pre-upgrade` hook | The Job `huron-migrate`, which you apply and wait for |
 | A changed configuration | A `checksum/config` annotation restarts the API pods | A new ConfigMap name restarts the API pod |
-| The lake and the uploads | Not yet: the API pod mounts no share | The claim `huron-lake`, which the API mounts read-write, and the upload pod `huron-uploads` with nginx and tusd |
-| API replicas | The value `replicaCount` | One, with the strategy `Recreate` |
+| The lake and the uploads | Not yet delivered: the API pod mounts no share, so it takes no upload and no commit | The claim `huron-lake`, which the API mounts read-write, and the upload pod `huron-uploads` with nginx and tusd |
+| API replicas | The value `replicaCount`. Without a lake, no replica writes the share | One, with the strategy `Recreate`: the one writer of the lake |
 | Exposure | A Route or an Ingress | A Route for the API and a Route for `/files` |
 | The web | Optional, off by default | Not included |
 
@@ -390,10 +433,16 @@ development machine, with Ingresses in place of the Routes. `make k8s-local-clus
 cluster. `make k8s-local`, `make k8s-local-smoke` and `make k8s-local-down` use the overlay.
 
 Both migration Jobs run `alembic upgrade head`. The revisions are in `migrations/versions/`:
-`0001_huron` is the first schema, and `0002_organization_catalog_roles` lets the three catalog
-roles have grants at organization scope. The web image comes from `web/Containerfile`, with
-`docs/` as the build context `docs`. [Deploying](operator.md#deploying) and
-`deploy/README.md` give the steps.
+
+- `0001_huron` is the first schema.
+- `0002_organization_catalog_roles` lets the three catalog roles have grants at organization scope.
+- `0003_uploads` added the tables of the first upload design.
+- `0004_publication` adds the objects, the upload attempts, the commit requests and their entries.
+- `0005_drop_legacy_uploads` drops the tables of the first upload design. It refuses to run when
+  one of them holds a row.
+
+The web image comes from `web/Containerfile`, with `docs/` as the build context `docs`.
+[Deploying](operator.md#deploying) and `deploy/README.md` give the steps.
 
 For development, the Makefile starts one of two Docker stacks. They use the same ports, so each
 start stops the other stack first. In both, the API holds the lake `/data1/huron`, and nginx and
@@ -434,7 +483,8 @@ and startup lines. The service writes these events:
 | `broker.exchange` | INFO | A token exchange succeeded. The line has the subject and the group count. |
 | `api.unexpected_error` | ERROR | A request failed with an unexpected error. The `request_id` is also in the 500 response. |
 
-[Logging](operator.md#logging) shows example lines.
+A service with a lake also writes the events of the writer lock, the seals, the publications and
+the cleanup. [Logging](operator.md#logging) lists them and shows example lines.
 
 ## Binding design documents
 
@@ -443,8 +493,10 @@ These documents decide the design. When this page and one of them disagree, the 
 - `IMPLEMENTATION_PLAN.md`, sections 3 to 9, with their dated amendments: the decisions, the
   architecture, the domain model, the storage layout, the persistence, the API and the CLI.
 - `docs/web-design.md`, with its dated amendments: the design of the web.
-- `docs/adr/`: the architecture decision records, from NFS-only storage (0001) to declared
-  organizations (0007).
+- `M11_PLANS.md` and the plan files that it names, for the uploads and the publication of a
+  commit. They replace some decisions of `IMPLEMENTATION_PLAN.md`.
+- `docs/adr/`: the architecture decision records, from NFS-only storage (0001) to the uploads
+  through tusd (0008). A note in ADR 0008 names the parts that the publication design replaced.
 - `AGENTS.md`: the package layout, the dependency rules, the code conventions and the gate.
 - `docs/openapi.json`: the API contract. The web generates its API types from it.
 

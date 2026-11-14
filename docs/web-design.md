@@ -128,7 +128,7 @@ variable; `/login` shows `error=config`.
     tab says the groups are declared as `groups.<role>` in the service configuration; for an
     undeclared one, `administerOrganization` shows the hint "Grant a role on the organization":
     `huron adm grant <role> <ldap-group> --org <org>` (`cliCommand({ verb: 'adm grant',
-organization })`; the CLI then names the `apply-acl` runs of every catalog of it).
+organization })`).
   - The catalog's Access tab (`…/access`) reads `GET /catalogs/{c}/grants/sources`
     (`HuronApi.catalogGrantSources`) instead of the effective groups, and its load returns
     `catalogAccess()` (`src/lib/access.ts`): every role, strongest first, with its groups under
@@ -524,7 +524,7 @@ against the visible list. `(app)/+layout.svelte` writes `huron_org` in `afterNav
 | `/orgs`                               | Cards: `display_name \|\| name` (name as secondary only when different), description, "N catalogs", paged.                                                                                                                                                                                                                                                                                                          |
 | `/orgs/[org]`                         | Org header (display name, name, description); catalogs list: display name, name, description, schema `name vN` (links to the catalog's Schema tab), "N namespaces in total", paged; empty state with the org-admin hint (4.6).                                                                                                                                                                                      |
 | `/catalogs/[catalog]` (Overview)      | Header: display name, name, organization link, description, schema link, "N namespaces in total". Root namespaces (rows with _Holds collections_ / _Structure only_, child and collection counts), paged; admin hint for creating namespaces.                                                                                                                                                                       |
-| `…/access`                            | Effective groups per role (`platform_admin`, `org_admin`, `catalog_admin`, `contributor`, `reader`) with human role names and what each can do; groups the signed-in user belongs to are marked "You"; admin hint `huron --catalog <c> adm grant …` + `huron --catalog <c> adm apply-acl <c> --recursive`.                                                                                                          |
+| `…/access`                            | Effective groups per role (`platform_admin`, `org_admin`, `catalog_admin`, `contributor`, `reader`) with human role names and what each can do; groups the signed-in user belongs to are marked "You"; admin hint `huron --catalog <c> adm grant …`.                                                                                                                                                                |
 | `…/activity`                          | Catalog audit log (4.4), paged by `next_cursor` only.                                                                                                                                                                                                                                                                                                                                                               |
 | `…/schema`                            | Resolved schema as a field table (4.3) plus raw JSON in a disclosure.                                                                                                                                                                                                                                                                                                                                               |
 | `namespaces/[path]`                   | Header: name, identifier, badge, counts, share path with copy; child namespaces (`?namespaces_cursor=`) and collections (`?collections_cursor=`) as two-line rows; empty copy depends on `collections_allowed`; hints (4.6).                                                                                                                                                                                        |
@@ -1028,7 +1028,7 @@ Raw detail JSON in a disclosure. Timestamps fixed UTC.
     `… create namespace <parent>.<name> [--allow-collections]` (was `collection create` and
     `namespace create`);
   - on the access tab, `huron --catalog <c> adm grant <role> <ldap-group>` then
-    `… adm apply-acl <c> --recursive` (was `catalog grant <c> <role> <ldap-group>` and
+    the former ACL command of `huron adm` (was `catalog grant <c> <role> <ldap-group>` and
     `acl apply <c> --recursive`). `adm grant` takes a catalog role's catalog from its own
     `--catalog`, else the global one; the hint passes it once, as the global `--catalog` every other
     catalog hint starts with, rather than twice;
@@ -1038,7 +1038,7 @@ Raw detail JSON in a disclosure. Timestamps fixed UTC.
     catalog positional is gone, and `search` searches the global `--catalog`, else the current one).
 
   The `verb` of each `CliCommand` is the command's words as typed (`'activate collection'`,
-  `'adm apply-acl'`, …). Covered by `src/lib/cli.test.ts`, the component tests of the routes that
+  `'adm grant'`, …). Covered by `src/lib/cli.test.ts`, the component tests of the routes that
   show hints and the e2e tests that read them.
 
 ### 4.7 Copy
@@ -1050,12 +1050,20 @@ Raw detail JSON in a disclosure. Timestamps fixed UTC.
   commands. Namespace navigation is Overview and CLI; no unsupported tabs are implied. Collection
   navigation now has seven tabs, using wrapping pills until there is room for a single underlined
   row. Search keeps its query-specific CLI hint alongside search results.
-- **Accepted amendment (2026-11-08, the CLI writes nothing to the lake).** `huron adm apply-acl`
-  is gone (IMPLEMENTATION_PLAN.md §9, "Amendment (2026-11-08): the CLI writes nothing to the
+- **Accepted amendment (2026-11-08, the CLI writes nothing to the lake).** The ACL command of
+  `huron adm` is gone (IMPLEMENTATION_PLAN.md §9, "Amendment (2026-11-08): the CLI writes nothing to the
   lake"), and `huron adm grant` prints no reminder to apply ACLs. The catalog CLI tab shows the hint
   "Grant a role" with the one line `huron --catalog <c> adm grant <role> <ldap-group>`. The
-  `CliCommand` verb `'adm apply-acl'` is gone. This replaces the `apply-acl` text of §4, of the
+  `CliCommand` verb of the ACL command is gone. This replaces the ACL text of §4, of the
   organization Access tab and of the oc-style amendment above.
+- **Accepted amendment (2026-11-13, the API writes the lake).** The first non-goal of §2 says that
+  the service mounts nothing and that the CLI creates directories, ACLs and `metadata.json`. That
+  is no longer the system. The API holds the lake read-write as its one writer: it makes the
+  directories, writes each `metadata.json` and publishes each committed file. The lake has no
+  ACLs. The CLI uploads through tusd and writes nothing to the lake, apart from the provision
+  commands of the storage administrator. The web still makes no writes, and its CLI hints stay as
+  they are. §4, the organization Access tab and the earlier amendments now name the removed ACL
+  command in words, and §4 shows only the `adm grant` hint that the web shows.
 
 Login: title "Sign in to Huron", lead "The catalog of raw scientific data on the Huron share.", bullets:
 browse catalogs, namespaces and collections; search metadata across your organization; see who can read

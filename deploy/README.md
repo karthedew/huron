@@ -43,7 +43,8 @@ the CLI no longer knows where it is until you declare the organization again wit
 Empty an organization while it is still declared, then remove it (see
 [docs/operator.md](../docs/operator.md#configuration)). A rename is
 one entry removed and another added. Without the key the service is unmanaged: platform admins
-create organizations with `huron create org` under the CLI's `mount_prefix`, as before.
+create organizations with `huron create org`, directly below `lake_path`. A workstation sees them
+below the CLI's `mount_prefix`.
 
 Each entry has these fields:
 
@@ -132,9 +133,13 @@ Both pods run as one user `U` with the primary group `G`, never as root, with th
 
 ### The export rules
 
-- Make the export read-write only for the nodes that run the API pod and the upload pod. Put the
-  upload pod on those nodes with `nodeSelector`, `tolerations` and `affinity` in `uploads.yaml`.
-- Every other client mounts the export read-only.
+- Make the export read-write only for the clients that run the API pod and the upload pod. Put
+  the upload pod on those nodes with `nodeSelector`, `tolerations` and `affinity` in
+  `uploads.yaml`.
+- Every other client mounts the export read-only (`ro`).
+- The provision steps run as root on a machine with a writable mount: the storage system's own
+  shell, or a client that the export does not squash. They run before the export is restricted
+  (steps 5 and 8 of the install order, before step 9).
 - The export trusts UIDs (`sec=sys`). A user who is root on a client can read each file, and a
   process on a read-write client that claims `U` can write the lake.
 
@@ -165,8 +170,12 @@ Both pods run as one user `U` with the primary group `G`, never as root, with th
   `OPTIONS /files/`. Its liveness probe asks `/livez`, which nginx answers itself.
 - `terminationGracePeriodSeconds` of both pods is 90 s. It must stay longer than
   `upload_hook_timeout` (60 s), the longest time that the CLI waits for a seal. If you change
-  `upload_hook_timeout` (at most 55 minutes), change tusd's `-hooks-http-timeout` to the same
-  value, and make both grace periods longer.
+  `upload_hook_timeout` (at most 55 minutes), change these tusd flags of `uploads.yaml` with it:
+  `-hooks-http-timeout` to the same value, `-request-completion-timeout` to the same value as
+  `-hooks-http-timeout`, and `-network-timeout` to a longer value. Also make both grace periods
+  longer than `upload_hook_timeout`. A request through nginx still waits at most 120 s for tusd
+  (`proxy_read_timeout` in `nginx-uploads.conf.template`). After a 504, the CLI reads the state of
+  the upload. The [operator guide](../docs/operator.md#the-upload-pod) gives an example.
 
 ### Install order
 
@@ -182,15 +191,25 @@ Both pods run as one user `U` with the primary group `G`, never as root, with th
    `organizations` key for unmanaged mode. Set the same host in both Routes and in
    `HURON_UPLOADS_HOST` of `uploads.yaml`, and `U` and `G` in both pods. An edit of `huron.yaml`
    changes the name of the ConfigMap `huron-config-<hash>`, so `oc apply -k` rolls the API pod.
-5. The storage administrator prepares the lake path and the organization directories
-   ([Preparing the organization directories](#preparing-the-organization-directories)). The API
+5. The storage administrator prepares the lake path and the organization directories with the
+   two `provision-orgs` lines of
+   [Preparing the organization directories](#preparing-the-organization-directories). The API
    does not start on a lake path that it cannot write, and the init container of the upload pod
-   needs `.tus-uploads`.
+   needs `.tus-uploads`. The apply and `verify-mounts` of that block come in steps 6 and 7. In the
+   storage system's own shell, where the CLI may not run, run the script that `--emit-script`
+   prints on a client with the CLI instead (see the last item of that section).
 6. Run `oc apply -k deploy/openshift`. Wait for the migration with
    `oc wait --for=condition=complete job/huron-migrate`. Until the Job ends, the API pod can fail
    to start and start again.
 7. Wait for `oc rollout status deployment/huron` and `oc rollout status deployment/huron-uploads`.
-   Then check `/readyz` through the Route.
+   Then check `/readyz` through the Route. On a client with the CLI and a lake mount, log in and
+   run `huron adm verify-mounts`.
+8. Create the catalogs with their share groups. For each `SHARE_GROUP_PENDING` warning, the storage
+   administrator runs `huron adm provision-catalogs --emit-script > catalogs.sh` on a client with
+   the CLI and a lake mount: it reads the API and the share. The script runs as root on a machine
+   as in step 5, with the lake path at the same path and the share groups resolvable by name.
+9. Make the export read-only for every client except those of the API pod and the upload pod.
+10. Mount the share read-only (`ro`) on the workstations, and run `huron adm check`.
 
 Preview the manifests with `kubectl kustomize deploy/openshift`. For a new release, delete the
 finished Job (`oc delete job huron-migrate`) before you apply again, so that the migration runs for
@@ -295,14 +314,20 @@ With the default `K8S_LOCAL_LAKE`, the local cluster shares no lake directory wi
 
 ## Preparing the organization directories
 
-The API does not make the lake path or the directories of the declared organizations. After every
-change to the declared organizations, the storage administrator prepares them on a machine that
-mounts the lake read-write, as root:
+The API does not make the lake path or the directories of the declared organizations. The storage
+administrator prepares them as root, on a machine with a writable mount: the storage system's own
+shell, or a client that the export does not squash. The design gives no route for it after the
+export is restricted (step 9 of the install order). Agree on one with the storage team.
+
+While a declared organization has no directory or no marker, the readiness probe of the API fails,
+and the one API pod is not ready for every organization. So prepare an organization from the
+edited `huron.yaml` before you apply it. `--config` sends no request to the API:
 
 ```sh
-huron adm provision-orgs --dry-run   # what it would do
-huron adm provision-orgs             # the lake path, .tus-uploads, each <root>/<org> and the markers
-huron adm verify-mounts              # one row per organization; every row must say ok
+huron adm provision-orgs --config deploy/openshift/huron.yaml --dry-run   # what it would do
+huron adm provision-orgs --config deploy/openshift/huron.yaml             # or --org <org>
+oc apply -k deploy/openshift          # then apply the change (step 6 of a first install)
+huron adm verify-mounts               # after login, on this machine: each row says ok
 ```
 
 On that machine, the CLI's `mount_prefix` is the lake path. `provision-orgs` gives the lake path
@@ -313,11 +338,13 @@ is safe to run again. The marker names this service's instance and the organizat
 the API refuse disk operations below an organization whose marker is missing or names another
 instance or organization.
 
-- Without the API, for example before the first deploy, add `--config deploy/openshift/huron.yaml`.
-  The command then reads the organizations and the service user from that file and sends no
-  request to the API.
+- With `--config`, the command reads the organizations, `instance_id`, `service_uid` and
+  `service_group` from the file. It resolves `service_group` in the group database of this machine.
+  When the file has no `service_uid`, give `--uid`. When it has no `service_group`, or the
+  machine cannot resolve the group, give `--gid`. Without `--config`, the command reads them from the API, which must be ready.
 - Where only `root` may write a root, `huron adm provision-orgs --emit-script` prints the same steps
-  as a shell script to hand over.
+  as a shell script to hand over, for example to the storage system's own shell. The script uses
+  the absolute paths of the `mount_prefix` of the machine that prints it.
 
 ## Helm: not yet delivered
 
@@ -325,13 +352,17 @@ The Helm chart has no upload pod, no lake volume and no upload settings yet. Unt
 the uploads with the kustomize base. The Helm work adds:
 
 - The values `lake.claim`, `lake.path`, `serviceUser.uid`, `serviceUser.gid`, `serviceUser.group`,
-  `uploads.enabled`, the nginx and tusd images, `uploads.url`, the upload size limit,
-  `uploads.hookTimeout` (at most 55 minutes), `uploads.nodeSelector`, `uploads.tolerations` and
-  `uploads.affinity`, with their schema.
+  `uploads.enabled`, the nginx and tusd images, `uploads.url`, `uploads.hookTimeout` (at most 55
+  minutes), `uploads.nodeSelector`, `uploads.tolerations` and `uploads.affinity`, with their schema.
+- The capacity settings `max_upload_bytes`, `max_staged_bytes` and `min_free_bytes`, and the upload
+  lifetime `attempt_ttl`, with no unlimited default. The kustomize base keeps the defaults of the
+  API. These are no limit on the size of a file or on the staged bytes, 1 GiB free and 7 days. Set the limits in
+  `huron.yaml` ([Uploads: capacity and lifetime](../docs/operator.md#uploads-capacity-and-lifetime)).
 - The upload Deployment with the init container that removes the lock files, its Route, and its
   Ingress with the ingress-nginx defaults of the uploads.
 - The nginx ConfigMap from a copy of `deploy/openshift/nginx-uploads.conf.template`.
-- The lake volume and the security context of the API, and one writable replica only.
+- The lake volume and the security context of the API, and one writable replica only: the schema
+  refuses another value.
 - The production values. These need a record of the measurement of setgid inheritance on the
   export.
 

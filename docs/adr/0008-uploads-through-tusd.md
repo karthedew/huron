@@ -1,6 +1,42 @@
 # Uploads through tusd, placed by the Huron API with hard links
 
-Status: accepted (2026-11-06). Supersedes [0001](0001-nfs-only-storage.md).
+Status: accepted (2026-11-06). Supersedes [0001](0001-nfs-only-storage.md). Superseded in part
+(2026-11-13): the design of safe publication in `M11_PLAN_2_SAFE_PUBLICATION.md` replaces the
+placement, the receipts and the removals of this record. The note below names each replaced part.
+The text after the note is the record of 2026-11-06, kept as it was.
+
+## Supersession note (2026-11-13)
+
+A discovery run on 2026-11-10 found defects in the placement design of this record. A refused or
+abandoned overwrite could lose committed bytes. The newest placement won by its time. An upload
+that timed out could complete late and change public bytes. A lost answer was resolved by
+inference from the version. The built system replaces these parts:
+
+| Part of this record | Replaced by |
+| --- | --- |
+| `pre-finish` places the upload at its final name, and placed bytes are visible before the commit. | A seal copies the complete upload into the object area `<root>/<org>/.huron-objects/`, syncs it and measures its size and SHA-256. No public byte changes before the service accepts a commit. |
+| The hook waits while the API hashes the file, up to `upload_hook_timeout`. | `pre-finish` starts or joins the seal and waits at most 20 seconds. Then it answers with `Huron-Upload-State: sealing`, and the client reads `GET /api/v1/upload-attempts/{attempt_id}`. The API also seals a complete upload whose hook never ran. |
+| An upload row from `pending` to `placed` and `committed`, with a receipt. The latest placement of a path counts. | An upload attempt with the states `receiving`, `sealing`, `ready` and `consumed`, or the end states `failed`, `cancelled` and `expired`. A commit names each upload by its ID, and the service compares its own hash with the hash of the add. |
+| The commit records the rows in one transaction, and the committing request unlinks the removed files. | A commit request is accepted in one transaction. Then the API does one filesystem step for each entry, a removal included, and marks each entry done. A final transaction records the files and the version. A step that finds an unexpected entry blocks the request until a platform administrator retries or abandons it. |
+| A background task drains removal rows and sweeps abandoned uploads out of `.tus-uploads`. | The periodic loop continues accepted requests and runs the cleanup. The cleanup selects each object and each file of tusd by its database ID, never by age or by name. |
+| `pre-terminate` is a hook event, and tusd terminates uploads. | tusd termination is disabled. A cancel goes through `POST /api/v1/uploads/{id}/cancel`. |
+| Two API replicas may place one path at the same time, and a window stays an accepted risk. | One API replica holds a PostgreSQL session advisory lock and is the one writer. A second process serves reads only. A writer that loses its lock stops. The deployment never runs two writable pods. |
+| Every organization root is on one filesystem, because a hard link cannot cross filesystems. | Publication links only from the object area of an organization into the same organization directory. `.tus-uploads` can be on another filesystem, because the seal copies across filesystems. |
+| A lost answer is resolved from the version of the collection. | The service saves the outcome of each commit request under its request ID. The client asks for that outcome. |
+| `GET /api/v1/uploads/{id}` gives the state of an upload. | `GET /api/v1/upload-attempts/{attempt_id}` gives the state and the current upload ID of an attempt. |
+
+These parts of the record stay:
+
+- tus through an unmodified tusd behind nginx with `auth_request`, and the token on every tus
+  request.
+- The API as the only writer of the share, apart from tusd's own files and the provision commands
+  of the storage administrator.
+- `LakePath` with no-follow traversal, and no symbolic links in the lake.
+- Share groups and modes in place of ACLs.
+- The directory verbs, which commit their rows before their disk work.
+- The start from an empty lake.
+
+[The operator guide](../operator.md) describes the built system.
 
 ## Context
 

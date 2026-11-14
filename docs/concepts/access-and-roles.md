@@ -151,8 +151,10 @@ to edit. You still change the grants on a single catalog of that organization wi
 
 ## Directory modes and share groups
 
-Huron uses no ACLs. The API writes the lake as the service user. Clients mount the share read-only.
-The CLI does not create catalog, namespace or collection directories on the share.
+Huron uses no ACLs. The API writes the lake as the service user. Workstations mount the share
+read-only.
+The CLI does not create catalog, namespace or collection directories on the share. The API creates
+them.
 
 | Directory kind | Mode | Group |
 | --- | --- | --- |

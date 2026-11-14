@@ -2,8 +2,8 @@
 
 Huron catalogs raw scientific data that is on an NFS share, and it controls who can read and write
 that data. A service keeps the catalog, the metadata and the roles in PostgreSQL. The `huron` CLI
-copies your files onto the share and records them with the service. The web shows the same catalog
-in a browser and makes no changes. This page gives the big picture. The [user guide](../user-guide.md)
+uploads your files to the service. The service puts them on the share and records them in a
+commit. The web shows the same catalog in a browser and makes no changes. This page gives the big picture. The [user guide](../user-guide.md)
 and the [CLI reference](/docs/reference/cli/) give the details, and the
 [glossary](../user-guide.md#glossary) defines the Huron terms.
 
@@ -13,14 +13,17 @@ Your data stays in directories on the share. Huron gives each set of files a pla
 with metadata that the schema of the catalog checks. You find data with `huron tree`,
 `huron search` or the web. You read the files directly from the share.
 
-Roles belong to LDAP groups, never to people. The service checks your role for each request. Each
-directory that the CLI creates gets POSIX ACLs that give the same groups the same access on disk.
-With `acl_backend: none` in the CLI configuration, the CLI applies the mode bits only.
+Roles belong to LDAP groups, never to people. The service checks your role for each request. On
+the share, Huron uses no ACLs. A catalog can have one share group. The members of that group read
+the files of the catalog over the mount. Without a share group, only the service user and the
+service group read them
+([Directory modes and share groups](access-and-roles.md#directory-modes-and-share-groups)).
 
-The service never reads or writes the bytes of a file. Only the CLI touches the share. A contributor
-can write into a collection directory without the CLI. Huron does not prevent this.
-`huron adm check` reports the files that no commit recorded and the other places where the share
-and the catalog do not agree.
+The service writes the share. It makes the directories, and it puts each file of a commit on the
+share. With the provision commands, a storage admin prepares the directory of each organization
+and gives each catalog directory its share group. You mount the share read-only. Root on an NFS
+client can still change the share outside Huron, and Huron does not prevent this. `huron adm check` reports the files that no
+commit recorded and the other places where the share and the catalog do not agree.
 
 A collection has one version number, which counts its changes. When you push a file to a path that
 a commit recorded before, the new file replaces the old file. Huron keeps no earlier copy.
@@ -72,28 +75,28 @@ nothing in the current catalog, the CLI reads it as written. Thus `solar-wind.ac
 
 ## The three parts
 
-Huron has three parts. Only the CLI touches the share:
+Huron has three parts. The service writes the share:
 
 ```text
- machine that mounts the share                 service
-+----------------------------+   HTTPS   +------------------+
-| huron CLI                  | --------> | huron-api        |
-| creates directories        |           | catalog, roles,  |
-| copies files, commits them |           | audit log        |
-+----------------------------+           +------------------+
-              |                                   |
-              v                                   v
-+----------------------------+           +------------------+
-| share: <root>/<org>/...    |           | PostgreSQL       |
-+----------------------------+           +------------------+
+ your machine                                 service
++----------------------------+   HTTPS   +-------------------------+
+| huron CLI                  | --------> | huron-api               |
+| uploads files, commits     |           | upload proxy and tusd   |
++----------------------------+           +-------------------------+
+              ^                                 |              |
+              | reads, with a                   | writes       |
+              | read-only mount                 v              v
++------------------------------------------------+   +------------------+
+| share: <root>/<org>/...                        |   | PostgreSQL       |
++------------------------------------------------+   +------------------+
 
  browser ---> huron-web (read-only, and /docs) ---> huron-api
 ```
 
 | Part | Runs on | Does |
 | --- | --- | --- |
-| `huron-api` and PostgreSQL | OpenShift, or a managed PostgreSQL | Keeps organizations, catalogs, namespaces, collections, recorded files, schemas, role grants and the audit log. It never opens the share. |
-| `huron` CLI | machines that mount the share | Creates directories with their ACLs, copies files, records them in commits and checks the share against the catalog. |
+| `huron-api` and PostgreSQL | OpenShift, or a managed PostgreSQL | Keeps organizations, catalogs, namespaces, collections, recorded files, schemas, role grants and the audit log. It takes uploads through an upload proxy and tusd, makes the directories and puts each committed file on the share. |
+| `huron` CLI | your machine | Uploads files, records them in commits and asks the service to make directories. On a machine that mounts the share, it also checks the share against the catalog. |
 | `huron-web` | a Node.js server | Shows the catalog in a browser and makes no changes. It also serves this documentation at `/docs`, with no sign-in. |
 
 You log in to the CLI with `huron login` and to the web with the same company account. The service
@@ -123,24 +126,26 @@ groups and their roles. [Who has access](../user-guide.md#who-has-access) explai
 
 Operators can declare each organization in the service configuration. The entry gives the name,
 the LDAP groups of the organization-wide roles and, as an option, a root. The directory of the
-organization is `<root>/<name>`. An organization without a root is under the `mount_prefix` of the
-CLI, by default `/projects/huron`.
+organization is `<root>/<name>`. An organization without a root is directly below the lake path
+of the service. On your machine, it is below the `mount_prefix` of the CLI, by default
+`/projects/huron`, where your machine mounts the lake path.
 
 ```text
-service configuration              directory on each CLI machine
+service configuration              directory of the organization
   helio  root: /data1/huron  --->  /data1/huron/helio/
   geo    root: /data1/huron  --->  /data1/huron/geo/
-  astro  (no root)           --->  <mount_prefix>/astro/
+  astro  (no root)           --->  <lake_path>/astro/, on your machine <mount_prefix>/astro/
 ```
 
 The storage admin prepares each declared organization with `huron adm provision-orgs`. The
-command creates the directory when it is missing, applies its ACL and writes the marker `.huron`.
-The marker names the instance of the service and the organization. `huron adm verify-mounts` shows
-the state of each organization on your machine.
+command creates the directory when it is missing, gives it the service user and the service group,
+and writes the marker `.huron`. The marker names the instance of the service and the organization.
+`huron adm verify-mounts` shows the state of each organization on your machine.
 
-The CLI checks the marker of each declared organization, including one without a configured root.
-The marker must name this instance and this organization. Only an organization that is neither
-declared nor rooted uses the marker at the mount prefix. That marker names only the instance.
+The service and the CLI check the marker of each declared organization, including one without a
+configured root. The marker must name this instance and this organization. Only an organization
+that is neither declared nor rooted uses the marker at the lake path. That marker names only the
+instance.
 
 An `organizations` key in the service configuration selects managed mode, even when its list is
 empty. In managed mode, the service refuses `huron create org`. It also
@@ -175,11 +180,11 @@ A collection is in one of three states:
   more. Pushes still work.
 
 `huron create collection` reserves the name and asks for the metadata fields, or reads them from
-`--metadata`. Then it creates the directory and activates the collection. It writes `metadata.json`
-next to your files and selects the collection as the current collection.
+`--metadata`. Then it asks the service to activate the collection. The service activates it,
+creates its directory and writes `metadata.json` there. The CLI selects the collection as the
+current collection.
 
-With `--draft`, it stops before it creates the directory, and the draft becomes the current
-collection. Later, `huron activate collection` activates the draft. Activation needs metadata that
+With `--draft`, it stops before the activation, and the draft becomes the current collection. Later, `huron activate collection` activates the draft. Activation needs metadata that
 satisfies the schema. [Creating a collection](../user-guide.md#creating-a-collection) lists each step.
 
 A collection becomes incomplete when an administrator assigns a new schema to the catalog. Huron
@@ -191,9 +196,10 @@ Active and incomplete collections never return to draft. These states describe m
 not whether files are present or correct. An active collection can be empty. File checks belong to
 [`huron adm check`](raw-ingest.md#drift-detection).
 
-The creator of a collection or a Catalog Admin can delete it. `huron delete collection` deletes the
-recorded files, the collection and its directory. A file that no commit recorded stops the delete.
-The audit log keeps the history of the collection.
+The creator of a collection or a Catalog Admin can delete it. `huron delete collection` commits the
+removal of the recorded files, then deletes the collection and its directory. A file that no commit
+recorded stays, and the directory then stays too. `huron adm check` reports it. The audit log keeps
+the history of the collection.
 
 The version number detects changes since a client last read the collection. It does not identify a
 saved copy of the files. A commit records file changes, and the audit log records actions. Neither
@@ -203,11 +209,11 @@ provides an earlier copy of the data. The storage team's snapshots provide file 
 
 `huron checkout` records a working copy of one collection on your machine. The working copy holds
 the version of the collection, the stage and your metadata draft. It holds no files. `huron add`
-stages the path of a local file, and `huron push` copies that file onto the share. Each working copy
-has its own stage, and `huron checkout` selects which one is the current collection.
+stages the path of a local file, and `huron push` uploads that file to the service. Each working
+copy has its own stage, and `huron checkout` selects which one is the current collection.
 
 Each push carries the version of your working copy. When someone changed the collection after that
-version, Huron refuses the push, and the CLI copies nothing. Then run `huron pull` and push
+version, Huron refuses the push, and the CLI uploads nothing. Then run `huron pull` and push
 again. Your staged adds stay staged.
 [Staging and pushing files](../user-guide.md#staging-and-pushing-files) explains the stage and the
 push.
@@ -234,16 +240,17 @@ huron search -q "parker"                 #    or search the metadata
 huron checkout solar-wind.ace.run7       # 4. make it the current collection
 huron add data/*.h5                      # 5. stage local files
 huron status                             #    what the next push holds
-huron push -m "first run"                # 6. copy and commit
+huron push -m "first run"                # 6. upload and commit
 ```
 
 The push does these steps:
 
 ```text
 huron push
-  1. ask the service if it accepts the commit   (refused: nothing is copied)
-  2. copy each staged file onto the share
-  3. commit: the service records the files and adds 1 to the version
+  1. ask the service if it accepts the commit   (refused: nothing is uploaded)
+  2. upload each staged file through the upload proxy
+  3. commit: the service puts the files on the share,
+     records them and adds 1 to the version
 ```
 
 For step 7, open the address of the web and sign in with the same company account. Go to the

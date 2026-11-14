@@ -1,18 +1,25 @@
 # Huron
 
 Huron is a catalog and access-control plane for raw scientific data that lives on an NFS share.
-Scientists and administrators work through the `huron` command-line tool on machines that mount the
-share at `/projects/huron`. A FastAPI service and a PostgreSQL database hold the catalog of
-organizations, catalogs, namespaces and collections, their metadata, the role grants and an audit log.
+Scientists and administrators work through the `huron` command-line tool. A FastAPI service and a
+PostgreSQL database hold the catalog of organizations, catalogs, namespaces and collections, their
+metadata, the role grants and an audit log.
 
-Every directory the CLI creates carries POSIX ACLs derived from the catalog's role-to-LDAP-group
-grants, so the filesystem enforces the same reader, contributor and administrator boundaries as the
-service. Collection metadata is validated against a schema registry: each catalog is assigned a
-schema, and a collection may extend it with an override. Pushes are synchronous commits that carry the
-version they were based on, so a push that is behind is refused until the user pulls.
+The service is the one writer of the share, apart from tusd's own files and the provision
+commands of the storage admin. These prepare the lake path and the organization directories, and
+give the catalog directories their share groups. A push uploads each file over HTTPS through an
+upload proxy to tusd. The service seals each upload: it copies the bytes into a private object area and
+measures their size and SHA-256 hash. A commit then names the sealed uploads, and the service puts
+the files on the share with hard links and renames. Users mount the share read-only, for example
+at `/projects/huron`, to read the files. A push does not need the mount.
 
-The service never touches file bytes. The CLI copies files over the mount and records them with the
-service; `huron adm check` reports where disk and catalog disagree.
+Huron uses no POSIX ACLs. A catalog can have one share group, a POSIX group whose members read
+the catalog directory on the share. Without one, only the service user and the service group read
+it. Roles in the service belong to LDAP groups and control the API.
+Collection metadata is validated against a schema registry: each catalog is assigned a schema, and
+a collection may extend it with an override. Each commit carries the version that it was based on,
+so the service refuses a push that is behind until the user pulls. `huron adm check` reports where
+the share and the catalog disagree.
 
 ## Quick start
 
@@ -222,7 +229,7 @@ choose **Logout**, or sign out of the web and confirm on Keycloak's page. A priv
 too. `uv run huron whoami` shows who the CLI is.
 
 The web shows share paths under each organization's root from the API, such as
-`/data1/huron/helio/…`, the same paths the CLI writes to. Only for an organization without a root
+`/data1/huron/helio/…`, the same paths that the CLI reads. Only for an organization without a root
 does it fall back to its mount prefix, `/projects/huron`; to match a different CLI `mount_prefix`,
 start the stack with `HURON_WEB_MOUNT_PREFIX=<dir> make app`. Every `make app` without it goes back
 to `/projects/huron`.
@@ -242,12 +249,6 @@ A commit publishes uploads. The seed of `make app` reads `uploads_url` from the 
 bytes of the fixture's files with tus through the upload proxy and tusd, as the CLI does. Then it
 commits them. The API makes the directories of the seeded catalogs, namespaces and collections on
 the lake.
-
-On `heliophysics`, and without `--catalog`, `huron adm check` stops with `error: internal error
-[INTERNAL]`. That is a known API bug, not your setup: the metadata of the seeded collection
-`heliophysics.solar-wind.wind.swe-2023` holds the number `-1e31`, which the API reads back from
-PostgreSQL as an integer too large for its canonical JSON, so it cannot render that collection's
-`metadata.json`. The web's `metadata.json` page of that collection fails the same way.
 
 Sign out of Keycloak as described above, sign the CLI in as `user`, and make a collection in a
 seeded namespace. It shows in the web at once, at
@@ -346,7 +347,8 @@ On one stack, the seed, `make demo-noaa` and the create commands of the CLI make
 directories on the lake. The database of the other stack does not record them. A create command
 adopts an existing directory only when it is empty. So on the other stack, the seed, the demo or
 a create of the same catalog stops at the first such directory with `STORAGE_FAILED` (`… exists
-and is not an empty directory`).
+and is not an empty directory`). The CLI then also gives the hint to run `huron adm repair`. Do not
+run it for this error: the repair takes the directory with the files of the other stack in it.
 
 Before you change to the other stack, do one of these:
 
@@ -435,9 +437,6 @@ memory, so restarting it signs everyone out of the web. The images `huron-app-ap
   `make api`).
 - **The CLI is signed in as the wrong account.** Keycloak signed it in with your browser's session;
   sign out of Keycloak (see [The CLI on the host](#the-cli-on-the-host)) and log in again.
-- **`huron adm check` stops with `error: internal error [INTERNAL]`.** The seeded
-  `heliophysics.solar-wind.wind.swe-2023` trips a known API bug (see
-  [The seeded data](#the-seeded-data)); check the other catalogs with `--catalog`.
 - **Linux and Docker Desktop.** Both work the same way: ports published on 127.0.0.1 of the host reach
   the containers, and inside them 127.0.0.1 is the shared namespace. Docker Desktop must share the
   repository's folder for the bind mounts (`huron.dev.yaml`, `scripts/`, `docker/seed/`,

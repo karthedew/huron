@@ -1,16 +1,18 @@
 # How raw ingest works
 
-Huron does not hold your files itself. The files of a collection stay on the share, in one
-directory for each collection. The CLI is the only part of Huron that writes to the share. It
-copies your staged files into the directory of the collection. Then it records them in one commit
-on the service. The service records the size and the SHA-256 hash of each file, and the share holds
-the bytes. This page tells how each step works and what the CLI checks before it writes.
+The files of a collection stay on the share, in one directory for each collection. The service
+writes the share, apart from the provision commands of a storage admin. These prepare the
+organization directories and give the catalog directories their share groups. The CLI uploads your staged files through an
+upload proxy to tusd, and the service seals each upload. Then one commit names the sealed uploads,
+and the service puts the files into the directory of the collection. The service records the size
+and the SHA-256 hash of each file, and the share holds the bytes. This page tells how each step
+works and what Huron checks before it writes.
 
 ## The layout of the share
 
 Each organization has one directory, `<root>/<org>`. The root comes from the service configuration.
-An organization without a root uses the `mount_prefix` of the CLI, which is `/projects/huron` by
-default. Below the directory of the organization, each catalog, namespace and collection has its own
+An organization without a root is directly below the lake path of the service. On your machine,
+the CLI finds it below its `mount_prefix`, which is `/projects/huron` by default. Below the directory of the organization, each catalog, namespace and collection has its own
 directory:
 
 ```text
@@ -22,14 +24,14 @@ directory:
       solar-wind/                 namespace
         ace/                      namespace that allows collections
           run7/                   collection
-            metadata.json         sidecar that the CLI writes
+            metadata.json         sidecar that the service writes
             kp/q1.txt             a recorded file
 ```
 
 The API gives each path relative to the root, and the path starts with the name of the
 organization, as in `helio/heliophysics/solar-wind/ace/run7`. The CLI finds the root of the
 organization from the first segment of that path. A path with an empty segment, `.` or `..` is
-outside the share, and the CLI refuses it.
+outside the share, and Huron refuses it.
 
 Inside a collection, a file has a relative path, such as `kp/q1.txt`. Huron ignores case when it
 checks path uniqueness. Thus it cannot record `Data.h5` and `data.h5` as separate files. This rule
@@ -55,49 +57,65 @@ an organization on your machine.
 The marker is the `.huron` file in the directory of an organization. It is a small JSON document
 with the fields `huron`, `api_url`, `instance_id` and `organization`. A storage admin writes it
 with `huron adm provision-orgs`. An organization without a root that the configuration does not
-declare uses the marker at the mount prefix. That marker names only the instance.
+declare uses the marker at the lake path. That marker names only the instance.
 
-Before the CLI touches any directory of an organization, it reads the marker that guards it. The
-CLI refuses the operation unless these conditions are true:
+Before the service does a disk action in a directory of an organization, it reads the marker that
+guards it. The CLI does the same before it reads the share. Each refuses the operation unless these
+conditions are true:
 
-- The directory exists on this machine, and its marker exists and is readable.
-- Its `instance_id` is the instance id that the service gives in `GET /healthz`.
-- The marker of an organization names that organization. The marker at the mount prefix names no
+- The directory exists, and its marker exists and is readable.
+- Its `instance_id` is the instance id of the service, which `GET /healthz` gives.
+- The marker of an organization names that organization. The marker at the lake path names no
   organization.
 
-The check stops two mistakes. A CLI that points at a test service cannot write into the
+The check stops two mistakes. A service or a CLI that points at a test service cannot use the
 directories of the production service. An export that is mounted at the root of another
-organization cannot get files of the wrong organization. The CLI does this check inside every path
-that it uses on the share, so no command can skip it. A refusal exits with code 8.
+organization cannot get files of the wrong organization. The service answers such a refusal with
+503 `LAKE_UNAVAILABLE`. Each command of the CLI that reads the share reports a refusal in its own
+way:
+
+- `huron status` says that the share is not mounted on this machine, and it does not look for
+  unrecorded files. It does so for each refusal.
+- `huron adm verify-mounts` shows the state `missing`, `no marker`, `wrong instance` or
+  `wrong org`, and exits with code 1. A symbolic link, or a marker that the account cannot read,
+  has no state. The command then stops with that error (`SYMLINK_IN_LAKE` or `STORAGE_FAILED`)
+  and exit code 8. For a symbolic link at an organization with its own marker, the exit code is
+  1.
+- `huron adm check`, for an organization with its own marker, reports `org_dir_missing`,
+  `org_marker_missing` or `org_marker_mismatch` and skips its catalogs. A symbolic link at the
+  organization directory or at its marker gives `symbolic_link`, and the check skips its catalogs
+  too. A marker that the account cannot read gives `unreadable`, and the check still checks the
+  catalogs. With findings, the check exits with code 1. When the marker at the lake path refuses,
+  the check stops with exit code 2.
 
 [Adding an organization](../operator.md#adding-an-organization) tells how a storage admin prepares
 the directory and the marker. [The mount prefix](../operator.md#the-mount-prefix-for-organizations-without-a-root)
-tells how to mark the mount prefix.
+tells how to mark the lake path.
 
 ## Creating and activating a collection
 
 `huron create collection` makes the collection and its directory in this sequence:
 
-1. The CLI checks the marker of the organization. Thus a missing or wrong share stops the command
-   before the service reserves the name.
-2. The service reserves the name. The collection is a draft at version 1.
-3. The CLI asks for the metadata, or it reads `--metadata file.json`.
-4. The API creates the directory of the collection in the directory of its namespace. The directory
-   gets mode `2750` and inherits its parent's group.
-5. The service activates the collection. The request carries the version of the collection.
-6. The CLI gets the `metadata.json` document from the service and writes it into the directory.
-7. The CLI records a working copy and selects it as the current collection.
+1. The service reserves the name. The collection is a draft at version 1.
+2. The CLI asks for the metadata, or it reads `--metadata file.json`.
+3. The CLI asks the service to activate the collection. The request carries the version of the
+   collection. The service activates the collection only when its metadata satisfies the schema.
+4. After the activation, the service creates the directory of the collection in the directory of
+   its namespace. The directory gets mode `2750` and inherits the group of its parent.
+5. The service writes the `metadata.json` document into the directory.
+6. The CLI records a working copy and selects it as the current collection.
 
-With `--draft`, the CLI does not check the marker, and it stops after step 3. The draft becomes
-the current collection. `huron activate collection` does steps 4 to 7 later. The service activates
-a collection only when its metadata satisfies the schema.
+With `--draft`, the CLI stops after step 2. The draft becomes the current collection.
+`huron activate collection` does steps 3 to 6 later.
 
-Creating the directory and activating the record are separate operations. If activation fails,
-the draft can have a directory left by the CLI. Check the error and correct its cause. Then use
-`huron activate collection <identifier>` to continue with the reserved collection.
+The service commits the activation before it creates the directory. When the disk work then
+fails, the collection stays active, and the command stops with the error, for example
+`STORAGE_FAILED`. The hint names `huron adm repair`, which makes the directory and writes
+`metadata.json`. The error can say that the directory exists and is not empty. Then look at that
+directory first: the repair takes the directory with the files in it.
 
 The service user owns the collection directory. The directory inherits its group through setgid,
-not through ACLs or API grants. Clients mount the share read-only.
+not through ACLs or API grants. Workstations mount the share read-only.
 See [Directory modes and share groups](access-and-roles.md#directory-modes-and-share-groups) for the access rules.
 
 ## The working copy and the stage
@@ -144,86 +162,97 @@ examples.
 
 ## The push, step by step
 
-`huron push` copies the staged files onto the share and records them in one commit:
+`huron push` uploads the staged files through the upload proxy and tusd, and records them in one
+commit:
 
 ```text
 huron push
   |
   |-- read the collection ---- other version? --> stop, BASE_VERSION_CONFLICT
-  |-- dry-run commit --------- refused? --------> stop, nothing copied
-  |-- check the marker
-  |-- for each add:  copy to <name>.huron-part while hashing,
-  |                  fsync, rename to <name>, save the stage
-  |-- commit (base_version, adds, removes, host)
-  |-- unlink each removed file
+  |-- dry-run commit --------- refused? --------> stop, nothing uploaded
+  |-- for each add:  check the local file, create a tus upload,
+  |                  send the bytes in chunks of at most 64 MiB,
+  |                  wait until the service sealed the upload
+  |-- save the commit, then send it (request_id, base_version, adds, removes, host)
+  |-- 202? read the state of the request until it ends
   '-- clear the stage, record the new version
 ```
 
 These are the steps:
 
-1. The CLI takes the lock of the working copy. When another push of the same working copy holds
-   the lock, the push stops.
+1. The CLI takes the push lock of the working copy. When another push of the same working copy
+   holds the lock, the push stops.
 2. The CLI reads the collection from the service. When its version is not the version of the
    working copy, the push stops with `BASE_VERSION_CONFLICT`. When the collection is a draft, the
    push stops too.
-3. The CLI sends the commit to the service as a dry run. The dry run carries the paths and sizes,
-   and a `sha256` only where an earlier push already copied the file.
-4. The CLI checks the marker of the organization and finds the directory of the collection.
-5. For each staged add, the CLI copies the file into the directory, as the next list tells.
-6. The CLI sends the commit. The commit has `base_version`, `adds`, `removes`, `host` and the
-   optional `message`. Each add has `rel_path`, `size` and `sha256`.
-7. After the service accepts the commit, the CLI unlinks each removed file from the share.
-8. The CLI clears the stage and records the new version in the working copy.
+3. The CLI sends the commit to the service as a dry run. Each add carries its path, its size and
+   the `sha256` that `huron add` recorded. An add whose upload an earlier push sealed also carries
+   its upload ID.
+4. For each staged add, the CLI checks the size and the modification time of the local file. A
+   changed file stops the push with exit code 2.
+5. The CLI records a new upload attempt in the stage. Then it creates a tus upload at the
+   `uploads_url` of the service, and sends the bytes. Each request carries the Huron token of the
+   user, and the upload proxy asks the service to authorize it.
+6. The service seals the upload. It copies the bytes into the object area of the organization,
+   syncs the copy, and measures its size and its SHA-256 hash.
+7. The CLI saves the commit in the working copy, with a new request ID. Then it sends the commit:
+   `request_id`, `base_version`, `adds`, `removes`, `host` and the optional `message`. Each add has
+   `rel_path`, `size`, `sha256` and `upload_id`.
+8. The service accepts the commit and puts each file on the share. The answer is 200, or 202 when
+   the commit does not end within 5 seconds. After a 202, the CLI reads the state of the request
+   every 5 seconds, for at most 600 seconds.
+9. The CLI clears the stage and records the new version in the working copy.
 
 The dry run does all the checks of a real commit, and it changes nothing. The service checks your
 right to write files, the state of the collection, the paths, the removed files, the base version
-and the file tree. When the service refuses the dry run, the push stops before it copies one byte.
+and the file tree. When the service refuses the dry run, the push stops before it sends one byte.
 The share and the stage do not change.
 
-The dry run reserves no version and holds no lock during the copy. Another client can change the
+The dry run reserves no version and holds no lock during the upload. Another client can change the
 collection before the real commit. The service checks the version again when that commit arrives.
-The database transaction covers the recorded changes only. It cannot undo file copies on the share.
+The uploads of a refused commit stay `ready`, and the stage keeps them for the next push.
 
-For each file in step 5, the CLI does these steps:
+The service never trusts the hash of the CLI alone. It compares the SHA-256 that it measured at
+the seal with the `sha256` of the add. When the two are not equal, it refuses the commit with
+`UPLOAD_INELIGIBLE`. The service refuses a commit with more than 10,000 entries, adds and removals
+together.
 
-1. It creates the parent directories inside the collection with mode 2770.
-2. It opens `<name>.huron-part` next to the destination. It unlinks an old part file first.
-3. It copies the local file into the part file and calculates the SHA-256 hash during the copy.
-4. It flushes the part file to disk with `fsync`.
-5. It renames the part file to `<name>`. The rename replaces a file with that name.
-6. It saves the size and hash in `working.json`, and it prints `copied <path> (<n> bytes)`.
+**How the service puts the files on the share.** No file in the directory of the collection changes
+before the service accepts a commit. Then the service does one step for each entry, in a fixed order:
 
-When the copy fails, the CLI unlinks the part file. The file at `<name>` does not change.
+- A new or replaced file: a hard link from the sealed object to a temporary name
+  `.<name>.<upload ID>.huron-part`, then a rename over `<name>`. A reader sees the old file or the
+  new file, never a part of it.
+- A removed file: an unlink.
+- A directory that the commit needs or makes empty: a `mkdir` or a removal.
 
-The service refuses a commit with more than 10,000 entries, adds and removals together. The CLI
-unlinks removed files only after the commit, so a commit that fails never unlinks a file. When an
-unlink fails, the CLI prints a warning and the push continues. A file that is already gone is not
-an error.
+After the last step, one database transaction records the files and the new version. Until then,
+the service shows the files of the last commit that succeeded. The directory on the share can then
+hold a mix of old and new files.
+[Publication of a commit](../operator.md#publication-of-a-commit) tells more.
 
 ## When a push stops
 
 A push can stop at different points. The result is different for each point:
 
-- **Before the copy.** The checks of steps 2 and 3 change nothing. Correct the cause and push again.
-- **During the copy.** The stage already holds the hash of each file that the CLI copied. Run
-  `huron push` again. When a file on the share still has the saved size and hash, the CLI does not
-  copy it again. The CLI reads the file on the share again to calculate its hash.
-- **When the service refuses the commit after the copy.** This can occur when another commit
-  came first. The copied files stay on the share, but no commit records them. `huron status` shows
-  new paths as unrecorded files. A copied file that replaces a recorded file already holds the new
-  bytes, while its record still describes the old file. `huron adm check --hash` detects that
-  difference. The stage keeps the hashes for a later push.
-- **When the commit gets no answer from Huron.** The service can be unreachable, or the answer can
-  be lost. Then the CLI cannot tell whether the service applied the commit, so it reads the
-  collection again. The CLI accepts the commit as applied when these two conditions are true:
-  - The version of the collection is higher than the version of the working copy.
-  - The service records each staged add with the hash that the CLI copied.
+- **Before the upload.** The checks of steps 2 to 4 change nothing. Correct the cause and push
+  again.
+- **During an upload.** The stage records each upload attempt. The next push asks the service for
+  the state of each upload. It sends only the bytes that the service does not have, and it does not
+  send a file again when the service sealed it.
+- **When the service refuses the commit.** Nothing on the share changed. The uploads stay `ready`,
+  and the stage keeps them. The CLI shows the error of the refusal. Correct the cause and push
+  again. The next push uses a new request ID.
+- **When the commit gets no answer.** The commit stays saved in the working copy, with its request
+  ID. The next `huron push` asks the service for the result of that request. The CLI never guesses
+  the result.
+- **When a step of the commit is blocked.** The service found an entry on the share that the commit
+  does not expect, and it changed nothing there. The push waits up to 10 minutes for the request,
+  then stops with exit code 6 and `PUBLICATION_BLOCKED`. A platform admin must resolve the commit
+  request.
 
-  Otherwise, the CLI shows the original error. The stage stays, and you can push again.
-
-A crash or a killed process during a copy can leave a `.huron-part` file. `huron adm check`
-reports a part file older than one hour as `stale_part`. A later copy of the same file unlinks the
-part file and writes it again.
+[Continuing an interrupted push](../user-guide.md#continuing-an-interrupted-push) tells what the
+CLI keeps and what to do in each case.
 
 ## Base version conflicts and huron pull
 
@@ -247,11 +276,13 @@ shows the error and the commands.
 
 ## What the service records
 
-The service writes each commit in one database transaction. It applies all of the commit, or it
-refuses all of it. A commit that it accepts does these changes:
+The service accepts a commit in one database transaction, or it refuses all of it. After the
+steps on the share, one more transaction records the commit. That transaction does these
+changes:
 
-- It records one row for each added file: the path, the size, the SHA-256 hash, the time, the user
-  and the commit. An add of a path that is already recorded replaces the row of that path.
+- It records one row for each added file: the path, the size, the SHA-256 hash, the time, the user,
+  the commit and the sealed object. An add of a path that is already recorded replaces the row of
+  that path.
 - It removes the row of each removed file.
 - It increases the version of the collection by 1 and sets its file count.
 - It records the commit: the base version, the new version, the number of adds and removals, the
@@ -265,18 +296,18 @@ Refer to [Backups and recovery](../operator.md#backups-and-recovery).
 
 ## The metadata.json sidecar
 
-The metadata is in PostgreSQL, and the service is its source of truth. The CLI also writes a copy,
-`metadata.json`, into the directory of each collection that is not a draft. Thus the information
-stays next to the files, also without the service.
+The metadata is in PostgreSQL, and the service is its source of truth. The service also writes a
+copy, `metadata.json`, into the directory of each collection that is not a draft. Thus the
+information stays next to the files, also without the service.
 
-The service makes the document, and the CLI writes it without changes. It holds the identifier, the
-organization, the catalog, the schema, the schema override, the metadata, the creator and the time
-of creation. It does not hold the version or the file count, so a push does not make it stale.
+The document holds the identifier, the organization, the catalog, the schema, the schema override,
+the metadata, the creator and the time of creation. It does not hold the version or the file
+count, so a push does not make it stale.
 
-The CLI writes the sidecar at activation. It writes the sidecar again at each change that the CLI
-makes to the metadata or the schema override, such as `huron publish meta` or `huron set override`.
-`huron adm check` reports `sidecar_stale` when the file is missing or does not agree with the
-document of the service.
+The service writes the sidecar at activation. It writes the sidecar again after each change of the
+metadata or the schema override, such as `huron publish meta` or `huron set override`. A schema
+assignment of the catalog also writes it. `huron adm check` reports `sidecar_stale` when the file is
+missing or does not agree with the document of the service. `huron adm repair` writes it again.
 
 ## Drift detection
 
@@ -309,8 +340,10 @@ example when the share is not mounted.
 
 The check only reads the share. It does not remove or change an entry that it reports, or any
 other entry. An entry that the account cannot read is an `unreadable` finding, and the check
-continues. Only the service user can read the object area `.huron-objects` of an organization.
-The check skips the object area for every other account.
+continues. The object area `.huron-objects` of an organization is the exception: its mode is
+`0700`, so only the service user can list it. As the service user, the check reports its probe
+files, links and entries that it cannot stat. For every other account, the check skips the object
+area with no finding.
 
 The check does not repair directories. API grants and the catalog's filesystem share group are separate.
 A grant change does not change directory permissions. The API repair endpoints use database rows to plan directory work, not a filesystem scan.
@@ -325,13 +358,14 @@ finding.
 
 ## The trust model
 
-Huron contains and detects mistakes. It does not prevent all of them. Clients mount the share read-only,
+Huron contains and detects mistakes. It does not prevent all of them. Workstations mount the share read-only,
 and API privileges control writes through Huron. Directory modes and share groups control filesystem reads.
 AUTH_SYS trusts client user IDs, so these permissions do not protect against root on an authorized client.
 
-The service never reads the share. It trusts the size and the hash that the CLI reports in each
-commit. After the commit, `huron adm check` finds a changed file when its size changed. Only
-`huron adm check --hash` compares the contents.
+The service measures the size and the SHA-256 hash of each upload itself, when it seals the
+upload. A commit names the sealed uploads, and the service refuses an add whose hash is not the
+hash of its upload. After the commit, `huron adm check` finds a changed file when its size changed.
+Only `huron adm check --hash` compares the contents.
 
 Huron uses no ACLs. Directory modes and share groups control filesystem read access independently of API grants.
 The CLI reports drift but does not change those directory permissions.
